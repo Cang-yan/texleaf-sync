@@ -3,7 +3,7 @@ import { Agent, fetch as undiciFetch } from "undici";
 
 import { AuthError, ConfigError } from "./errors.js";
 import { readJson, writeJsonAtomic } from "./files.js";
-import { normalizeHost } from "./platform.js";
+import { hostPlatform, normalizeHost } from "./platform.js";
 
 export interface StoredCookie {
   name: string;
@@ -71,7 +71,7 @@ export async function saveSession(file: string, session: AuthSession): Promise<v
 
 export async function loadSession(file: string, expectedHost?: string): Promise<AuthSession> {
   const session = await readJson<AuthSession>(file);
-  if (expectedHost && normalizeHost(session.host) !== normalizeHost(expectedHost)) {
+  if (expectedHost && !hostsMatch(session.host, expectedHost)) {
     throw new AuthError(`Session host ${session.host} does not match ${normalizeHost(expectedHost)}.`);
   }
   return session;
@@ -220,4 +220,12 @@ function parseSetCookie(header: string, host: string): StoredCookie | undefined 
 
 function cookiesToHeader(cookies: Map<string, StoredCookie>): string {
   return [...cookies.values()].map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+}
+
+function hostsMatch(savedHost: string, expectedHost: string): boolean {
+  const saved = normalizeHost(savedHost);
+  const expected = normalizeHost(expectedHost);
+  if (saved === expected) return true;
+  const savedPlatform = hostPlatform(saved);
+  return savedPlatform !== "custom" && savedPlatform === hostPlatform(expected);
 }

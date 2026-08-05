@@ -11,14 +11,14 @@ English: [README.md](README.md)
 通过 release URL 安装：
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.1/texleaf-sync-0.1.1.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.2/texleaf-sync-0.1.2.tgz
 texleaf --version
 ```
 
 或者安装已经下载到本地的 release tarball：
 
 ```bash
-npm install -g ./texleaf-sync-0.1.1.tgz
+npm install -g ./texleaf-sync-0.1.2.tgz
 texleaf --version
 ```
 
@@ -58,7 +58,7 @@ texleaf auth login
 
 ### 3. Clone 一个 Overleaf 项目
 
-打开 Overleaf 项目页面，从 URL 里复制项目 ID：
+打开 Overleaf 项目页面，复制项目 URL：
 
 ```text
 https://latex.cstcloud.cn/project/67ab12cd34ef567890abcdef
@@ -68,14 +68,22 @@ https://latex.cstcloud.cn/project/67ab12cd34ef567890abcdef
 
 ```bash
 cd ~/papers
-texleaf clone --platform cstcloud 67ab12cd34ef567890abcdef
+texleaf clone https://latex.cstcloud.cn/project/67ab12cd34ef567890abcdef
 cd PROJECT_NAME_FROM_OVERLEAF
 ```
 
-兼容旧写法：
+`texleaf clone` 会从 URL 中解析 host 和 project id。目前这些官方 URL 都能识别：
 
 ```bash
-texleaf clone --platform cstcloud --project-id 67ab12cd34ef567890abcdef
+texleaf clone https://latex.cstcloud.cn/project/6a72a92ee92000863e4de8a1
+texleaf clone https://www.overleaf.com/project/697aee96f59bdd00852659f7
+texleaf clone https://cn.overleaf.com/project/697aee96f59bdd00852659f7
+```
+
+如果只传 project id，也仍然可以用，但需要自己提供目标平台或 host：
+
+```bash
+texleaf clone --platform cstcloud 67ab12cd34ef567890abcdef
 ```
 
 自部署 Overleaf Community Edition 用 `--host` 传入服务地址：
@@ -120,7 +128,7 @@ Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交�
 
 ## 当前状态
 
-当前版本：CLI `0.1.1`。
+当前版本：CLI `0.1.2`。
 
 主要命令：
 
@@ -281,4 +289,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 tarball 会包含 `dist/`、README 和 LICENSE，可用
-`npm install -g ./texleaf-sync-0.1.1.tgz` 安装。
+`npm install -g ./texleaf-sync-0.1.2.tgz` 安装。

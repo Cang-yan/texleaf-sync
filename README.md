@@ -11,14 +11,14 @@ Node.js 20 or newer is required.
 Install from a release URL:
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.1/texleaf-sync-0.1.1.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.2/texleaf-sync-0.1.2.tgz
 texleaf --version
 ```
 
 Or install a downloaded release tarball:
 
 ```bash
-npm install -g ./texleaf-sync-0.1.1.tgz
+npm install -g ./texleaf-sync-0.1.2.tgz
 texleaf --version
 ```
 
@@ -59,7 +59,7 @@ or `--host http://localhost` can skip the selection prompt.
 
 ### 3. Clone an Overleaf project
 
-Open the project in Overleaf and copy the ID from the URL:
+Open the project in Overleaf and copy the project URL:
 
 ```text
 https://latex.cstcloud.cn/project/67ab12cd34ef567890abcdef
@@ -69,14 +69,24 @@ Then clone it into a project-named local Git repository:
 
 ```bash
 cd ~/papers
-texleaf clone --platform cstcloud 67ab12cd34ef567890abcdef
+texleaf clone https://latex.cstcloud.cn/project/67ab12cd34ef567890abcdef
 cd PROJECT_NAME_FROM_OVERLEAF
 ```
 
-The compatibility form also works:
+`texleaf clone` parses the URL host and project id. These official URLs are
+recognized:
 
 ```bash
-texleaf clone --platform cstcloud --project-id 67ab12cd34ef567890abcdef
+texleaf clone https://latex.cstcloud.cn/project/6a72a92ee92000863e4de8a1
+texleaf clone https://www.overleaf.com/project/697aee96f59bdd00852659f7
+texleaf clone https://cn.overleaf.com/project/697aee96f59bdd00852659f7
+```
+
+The raw project id form still works when you provide the target platform or
+host yourself:
+
+```bash
+texleaf clone --platform cstcloud 67ab12cd34ef567890abcdef
 ```
 
 For a self-hosted Overleaf Community Edition deployment, pass the base URL with
@@ -125,7 +135,7 @@ writes back to Overleaf only happen from committed local changes.
 
 ## Current Status
 
-Current version: CLI `0.1.1`.
+Current version: CLI `0.1.2`.
 
 Important commands:
 
@@ -292,4 +302,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 The tarball contains `dist/`, the READMEs, and the license file. It can be
-installed with `npm install -g ./texleaf-sync-0.1.1.tgz`.
+installed with `npm install -g ./texleaf-sync-0.1.2.tgz`.

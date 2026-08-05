@@ -9,13 +9,15 @@ import { type AuthSession, checkSession, loadSession, loginWithPassword, saveSes
 import { loadConfig, resolveRepoPath } from "./config.js";
 import { TexleafError } from "./errors.js";
 import { exists } from "./files.js";
-import { warn } from "./log.js";
+import { info, warn } from "./log.js";
 import {
+  type ProjectLocator,
   type PlatformName,
   globalSessionFile,
   hostPlatform,
   isPlatformName,
   normalizeHost,
+  parseProjectLocator,
   platformCookieNames,
   platformDisablesTls,
   platformHost,
@@ -28,7 +30,7 @@ const program = new Command();
 program
   .name("texleaf")
   .description("Git-safe Overleaf Community Edition sync CLI")
-  .version("0.1.1");
+  .version("0.1.2");
 
 program
   .command("clone")
@@ -40,13 +42,19 @@ program
   .option("--session-file <file>", "session JSON file")
   .option("--force", "allow cloning into a non-empty directory")
   .option("--insecure", "disable TLS verification")
-  .argument("<project-id>", "Overleaf project id")
+  .argument("<project>", "Overleaf project id or project URL")
   .argument("[directory]", "destination directory")
-  .action(async (projectId: string, directory: string | undefined, options) => {
+  .action(async (project: string, directory: string | undefined, options) => {
+    const locator = parseProjectLocator(project);
+    const host = resolveCloneHost(locator, options);
+    const platform = await resolveClonePlatform(locator, options, host);
+    if (locator.host) {
+      info(`Resolved project URL: host=${host}, platform=${platform}, projectId=${locator.projectId}`);
+    }
     const target = await new SyncEngine(process.cwd()).clone({
-      host: options.host,
-      platform: await resolvePlatform(options.platform, options.host, options.profile),
-      projectId,
+      host,
+      platform,
+      projectId: locator.projectId,
       projectName: options.projectName,
       directory,
       profile: options.profile,
@@ -164,6 +172,32 @@ async function authLogin(options: Record<string, any>): Promise<void> {
     : await interactiveSession(target, sslVerify, profile);
   await saveSession(target.sessionFile, session);
   console.log(`Saved session to ${target.sessionFile}`);
+}
+
+function resolveCloneHost(locator: ProjectLocator, options: Record<string, any>): string | undefined {
+  const explicitHost = options.host ? normalizeHost(options.host) : undefined;
+  if (!locator.host) return explicitHost;
+  if (explicitHost && explicitHost !== locator.host) {
+    throw new TexleafError(`Project URL host ${locator.host} conflicts with --host ${explicitHost}. Omit --host or use the same host.`);
+  }
+  return locator.host;
+}
+
+async function resolveClonePlatform(
+  locator: ProjectLocator,
+  options: Record<string, any>,
+  host: string | undefined
+): Promise<PlatformName | "custom"> {
+  if (!locator.host) return await resolvePlatform(options.platform, host, options.profile);
+  if (options.platform) {
+    if (!isPlatformName(options.platform)) {
+      throw new TexleafError(`Unknown platform: ${options.platform}. Use one of: ${Object.keys(platforms).join(", ")}`);
+    }
+    if (locator.platform === "custom" || options.platform !== locator.platform) {
+      throw new TexleafError(`Project URL resolves to platform ${locator.platform}; omit --platform or use the matching platform.`);
+    }
+  }
+  return locator.platform ?? hostPlatform(locator.host);
 }
 
 async function resolveAuthTarget(options: Record<string, any>, allowDefaultKnown = false): Promise<AuthTarget> {

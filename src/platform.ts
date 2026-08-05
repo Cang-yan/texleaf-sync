@@ -6,11 +6,13 @@ import { ConfigError } from "./errors.js";
 export const platforms = {
   cstcloud: {
     host: "https://latex.cstcloud.cn",
+    aliases: [],
     cookieNames: ["latex-session", "overleaf.sid"],
     insecureTls: true
   },
   overleaf: {
     host: "https://www.overleaf.com",
+    aliases: ["https://cn.overleaf.com"],
     cookieNames: ["overleaf_session2"],
     insecureTls: false
   }
@@ -33,6 +35,7 @@ export function hostPlatform(host: string): PlatformName | "custom" {
   const normalized = normalizeHost(host);
   for (const [name, platform] of Object.entries(platforms)) {
     if (normalizeHost(platform.host) === normalized) return name as PlatformName;
+    if (platform.aliases.some((alias) => normalizeHost(alias) === normalized)) return name as PlatformName;
   }
   return "custom";
 }
@@ -64,4 +67,29 @@ export function safeFilePart(value: string): string {
   const safe = value.trim().replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "");
   if (!safe) throw new ConfigError("Profile name must contain a safe filename character.");
   return safe;
+}
+
+export interface ProjectLocator {
+  projectId: string;
+  host?: string;
+  platform?: PlatformName | "custom";
+}
+
+export function parseProjectLocator(value: string): ProjectLocator {
+  const trimmed = value.trim();
+  if (!trimmed) throw new ConfigError("Overleaf project id or URL is required.");
+  let url: URL;
+  try {
+    url = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
+  } catch {
+    return { projectId: trimmed };
+  }
+  const match = url.pathname.match(/^\/project\/([^/?#/]+)/);
+  if (!match) return { projectId: trimmed };
+  const host = normalizeHost(url.origin);
+  return {
+    projectId: decodeURIComponent(match[1]),
+    host,
+    platform: hostPlatform(host)
+  };
 }

@@ -6,9 +6,9 @@ import test from "node:test";
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 
 import { cleanProjectTitle, textReplacementOperation } from "../dist/backend.js";
-import { loginWithPassword } from "../dist/auth.js";
+import { loadSession, loginWithPassword, saveSession, sessionFromCookieHeader } from "../dist/auth.js";
 import { defaultConfig } from "../dist/config.js";
-import { globalSessionFile, hostPlatform } from "../dist/platform.js";
+import { globalSessionFile, hostPlatform, parseProjectLocator } from "../dist/platform.js";
 import { isIgnored, normalizeProjectPath } from "../dist/snapshot.js";
 
 test("cleans Overleaf and cstcloud project titles", () => {
@@ -70,6 +70,43 @@ test("creates custom-host config with project-local session", () => {
   assert.equal(config.project.host, "http://localhost:8080");
   assert.equal(config.auth.sessionFile, ".texleaf/session.json");
   assert.equal(config.backend.sslVerify, true);
+});
+
+test("parses Overleaf project URLs", () => {
+  assert.deepEqual(parseProjectLocator("6a72a92ee92000863e4de8a1"), {
+    projectId: "6a72a92ee92000863e4de8a1"
+  });
+  assert.deepEqual(parseProjectLocator("https://latex.cstcloud.cn/project/6a72a92ee92000863e4de8a1"), {
+    projectId: "6a72a92ee92000863e4de8a1",
+    host: "https://latex.cstcloud.cn",
+    platform: "cstcloud"
+  });
+  assert.deepEqual(parseProjectLocator("https://www.overleaf.com/project/697aee96f59bdd00852659f7"), {
+    projectId: "697aee96f59bdd00852659f7",
+    host: "https://www.overleaf.com",
+    platform: "overleaf"
+  });
+  assert.deepEqual(parseProjectLocator("https://cn.overleaf.com/project/697aee96f59bdd00852659f7"), {
+    projectId: "697aee96f59bdd00852659f7",
+    host: "https://cn.overleaf.com",
+    platform: "overleaf"
+  });
+});
+
+test("loads official Overleaf sessions across host aliases", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-session-"));
+  const file = path.join(dir, "session.json");
+  await saveSession(
+    file,
+    sessionFromCookieHeader({
+      host: "https://www.overleaf.com",
+      profile: "default",
+      cookieHeader: "overleaf_session2=abc",
+      sslVerify: true
+    })
+  );
+  const session = await loadSession(file, "https://cn.overleaf.com");
+  assert.equal(session.host, "https://www.overleaf.com");
 });
 
 test("logs in to custom host with email and password", async () => {
