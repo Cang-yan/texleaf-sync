@@ -1,12 +1,28 @@
 # texleaf-sync
 
+中文文档: [README.zh-CN.md](README.zh-CN.md)
+
 ## Quick Start
 
 ### 1. Install the CLI
 
 Node.js 20 or newer is required.
 
-From this repository checkout:
+Install from a release URL:
+
+```bash
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.0/texleaf-sync-0.1.0.tgz
+texleaf --version
+```
+
+Or install a downloaded release tarball:
+
+```bash
+npm install -g ./texleaf-sync-0.1.0.tgz
+texleaf --version
+```
+
+Build from source:
 
 ```bash
 git clone https://github.com/Cang-yan/texleaf-sync.git
@@ -14,16 +30,6 @@ cd texleaf-sync
 npm install
 npm run build
 npm link
-texleaf --version
-```
-
-`npm link` exposes the `texleaf` command globally while keeping the checkout
-editable. After future source updates, run `npm run build` again.
-
-From a release tarball:
-
-```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.0/texleaf-sync-0.1.0.tgz
 texleaf --version
 ```
 
@@ -98,8 +104,6 @@ The CLI command is `texleaf`, and project metadata lives under `.texleaf/` so
 it can coexist with other tools. Local Git remains the safety layer: Overleaf
 is imported into a managed branch, normal Git review handles conflicts, and
 writes back to Overleaf only happen from committed local changes.
-
-中文文档: [README.zh-CN.md](README.zh-CN.md)
 
 ## Current Status
 
@@ -247,9 +251,13 @@ Never commit cookies or local sync metadata under `.texleaf/`.
 
 ## Development
 
+When working from a linked source checkout, rebuild after source changes so the
+global `texleaf` command sees the latest compiled files.
+
 ```bash
 npm install
 npm run build
+npm link
 npm test
 node dist/cli.js --help
 ```

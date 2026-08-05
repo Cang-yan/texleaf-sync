@@ -1,12 +1,28 @@
 # texleaf-sync
 
+English: [README.md](README.md)
+
 ## 快速开始
 
 ### 1. 安装 CLI
 
 需要 Node.js 20 或更新版本。
 
-从当前仓库安装：
+通过 release URL 安装：
+
+```bash
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.0/texleaf-sync-0.1.0.tgz
+texleaf --version
+```
+
+或者安装已经下载到本地的 release tarball：
+
+```bash
+npm install -g ./texleaf-sync-0.1.0.tgz
+texleaf --version
+```
+
+从源码构建：
 
 ```bash
 git clone https://github.com/Cang-yan/texleaf-sync.git
@@ -14,16 +30,6 @@ cd texleaf-sync
 npm install
 npm run build
 npm link
-texleaf --version
-```
-
-`npm link` 会把 `texleaf` 命令暴露到全局，同时保持当前 checkout 可编辑。之后源码有
-更新时，再运行一次 `npm run build` 即可。
-
-从 release tarball 安装：
-
-```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.0/texleaf-sync-0.1.0.tgz
 texleaf --version
 ```
 
@@ -95,8 +101,6 @@ freshness pull，拒绝脏工作区和未解决冲突，写入后再重新下载
 CLI 命令是 `texleaf`，项目内元数据目录是 `.texleaf/`，可以和其他工具共存。本地
 Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交给正常 Git 流程处理，
 只有已经 commit 的本地改动才会写回 Overleaf。
-
-English: [README.md](README.md)
 
 ## 当前状态
 
@@ -240,9 +244,13 @@ texleaf verify
 
 ## 开发
 
+如果使用 `npm link` 链接源码 checkout，源码更新后需要重新构建，才能让全局
+`texleaf` 命令使用最新编译结果。
+
 ```bash
 npm install
 npm run build
+npm link
 npm test
 node dist/cli.js --help
 ```
