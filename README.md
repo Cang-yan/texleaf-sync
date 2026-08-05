@@ -1,76 +1,203 @@
 # texleaf-sync
 
-`texleaf-sync` is a TypeScript CLI for syncing an Overleaf Community Edition
-project with a local Git repository.
+## Quick Start
 
-The CLI command is `texleaf`, and the project metadata lives under `.texleaf/`
-so it can coexist with other tools.
+### 1. Install the CLI
 
-## Install
+Node.js 20 or newer is required.
+
+From this repository checkout:
 
 ```bash
+git clone https://github.com/Cang-yan/texleaf-sync.git
+cd texleaf-sync
 npm install
 npm run build
 npm link
 texleaf --version
 ```
 
-Node.js 20 or newer is required.
+`npm link` exposes the `texleaf` command globally while keeping the checkout
+editable. After future source updates, run `npm run build` again.
 
-## Quick Start
-
-Log in once. For CAS Cloud, the interactive login asks for `latex-session` and
-`overleaf.sid`, then stores the session at `~/.texleaf/sessions/cstcloud.json`.
+From a release tarball:
 
 ```bash
-texleaf auth login
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.0/texleaf-sync-0.1.0.tgz
+texleaf --version
+```
+
+### 2. Log in once
+
+For CAS Cloud Overleaf Community Edition, the interactive login asks for
+`latex-session` and `overleaf.sid`, then stores the session at
+`~/.texleaf/sessions/cstcloud.json`.
+
+```bash
+texleaf auth login --platform cstcloud
 texleaf auth status --platform cstcloud
 ```
 
-Clone an Overleaf project into a local Git repo:
+You can also pass a copied browser Cookie header through standard input:
+
+```bash
+printf '%s' 'latex-session=...; overleaf.sid=...' | \
+  texleaf auth login --platform cstcloud --cookie-stdin
+```
+
+### 3. Clone an Overleaf project
+
+Open the project in Overleaf and copy the ID from the URL:
+
+```text
+https://latex.cstcloud.cn/project/67ab12cd34ef567890abcdef
+```
+
+Then clone it into a project-named local Git repository:
 
 ```bash
 cd ~/papers
-texleaf clone --platform cstcloud PROJECT_ID
-cd PROJECT_NAME
+texleaf clone --platform cstcloud 67ab12cd34ef567890abcdef
+cd PROJECT_NAME_FROM_OVERLEAF
 ```
 
-Normal edit loop:
+The compatibility form also works:
+
+```bash
+texleaf clone --platform cstcloud --project-id 67ab12cd34ef567890abcdef
+```
+
+### 4. Edit, review, and push
 
 ```bash
 texleaf pull
-# edit files
+# if pull staged remote changes:
+git diff --cached
+git commit -m "overleaf: import latest remote snapshot"
+
+$EDITOR main.tex
 git diff
 git add -A
 git commit -m "revise paper"
+
 texleaf push --dry-run
 texleaf push
 ```
 
-## Commands
+`texleaf push --dry-run` prints the local push plan without writing to
+Overleaf. `texleaf push` performs a freshness pull first, refuses dirty
+worktrees and unresolved conflicts, then verifies the remote snapshot after
+writing.
+
+## What It Does
+
+`texleaf-sync` is a TypeScript CLI for syncing an Overleaf Community Edition
+project with a local Git repository.
+
+The CLI command is `texleaf`, and project metadata lives under `.texleaf/` so
+it can coexist with other tools. Local Git remains the safety layer: Overleaf
+is imported into a managed branch, normal Git review handles conflicts, and
+writes back to Overleaf only happen from committed local changes.
+
+中文文档: [README.zh-CN.md](README.zh-CN.md)
+
+## Current Status
+
+Current version: CLI `0.1.0`.
+
+Important commands:
 
 - `texleaf auth login` saves browser cookies for a known platform or custom host.
 - `texleaf auth status` validates the saved session.
-- `texleaf clone` downloads an Overleaf project into a new Git repository.
+- `texleaf auth logout` deletes a saved session.
+- `texleaf clone` downloads an Overleaf project into a new local Git repository.
 - `texleaf pull` imports the latest Overleaf snapshot and merges it through Git.
 - `texleaf status` shows local sync state and pending push operations.
+- `texleaf status --json` prints machine-readable status.
 - `texleaf verify` compares the latest Overleaf snapshot with the local tree.
 - `texleaf push` applies committed local changes back to Overleaf and verifies
   the result.
+- `texleaf push --dry-run` prints the write plan without changing Overleaf.
 
-## Design Notes
+## Authentication
 
-The sync model intentionally stays small:
+Known platforms store global sessions under `~/.texleaf/sessions/`:
 
-- local Git remains the only merge and conflict layer;
-- `texleaf-remote` stores the latest imported Overleaf snapshot;
-- `.texleaf/config.json` records project/platform binding;
-- known-platform cookies are global under `~/.texleaf/sessions/`;
-- push refuses dirty worktrees and unresolved conflicts;
-- push performs a freshness pull before writing unless `--dry-run` is used.
+- `--platform cstcloud` uses `https://latex.cstcloud.cn` and expects
+  `latex-session` plus `overleaf.sid`.
+- `--platform overleaf` uses `https://www.overleaf.com` and expects
+  `overleaf_session2`.
+
+For custom Overleaf Community Edition hosts, pass `--host` and provide the full
+Cookie header:
+
+```bash
+printf '%s' 'sharelatex.sid=...' | \
+  texleaf auth login --host https://overleaf.example.com --cookie-stdin
+```
+
+Prefer `--cookie-stdin` or the interactive prompt. Session cookies grant access
+to your account: never post them in issues, paste them into logs, or commit
+`.texleaf/session.json` or files under `~/.texleaf/sessions/`.
 
 For `https://latex.cstcloud.cn`, TLS verification is disabled by default because
 that deployment's certificate chain can fail in local CLI websocket clients.
+Use `--insecure` for another host only when you understand the trust boundary.
+
+## End-to-End Workflow
+
+### Pull the latest remote snapshot
+
+Run `pull` before editing when other people may have changed the online project:
+
+```bash
+texleaf pull
+```
+
+If remote changes are staged, review and commit them:
+
+```bash
+git diff --cached
+git commit -m "overleaf: import latest remote snapshot"
+```
+
+### Edit locally and commit
+
+```bash
+$EDITOR main.tex
+git diff
+git add -A
+git commit -m "revise paper"
+```
+
+### Push back to Overleaf
+
+Preview first:
+
+```bash
+texleaf push --dry-run
+```
+
+Then write:
+
+```bash
+texleaf push
+```
+
+Before writing, `texleaf push` imports a freshness snapshot and requires the
+local branch to still match the managed remote baseline. If newer Overleaf
+changes appear, it stages them through Git and stops so you can review and
+commit the merge before trying again.
+
+### Check status or verify
+
+```bash
+texleaf status
+texleaf verify
+```
+
+Use `texleaf verify --allow-diff` when you want a zero exit code while still
+printing differences.
 
 ## Configuration
 
@@ -80,18 +207,61 @@ Example `.texleaf/config.json`:
 {
   "project": {
     "host": "https://latex.cstcloud.cn",
-    "projectId": "PROJECT_ID",
+    "projectId": "67ab12cd34ef567890abcdef",
     "projectName": "my-paper",
     "platform": "cstcloud"
+  },
+  "backend": {
+    "timeoutMs": 16000,
+    "sslVerify": false
   },
   "git": {
     "mainBranch": "main",
     "remoteBranch": "texleaf-remote"
   },
   "auth": {
+    "profile": "default",
     "sessionFile": "/Users/you/.texleaf/sessions/cstcloud.json"
+  },
+  "sync": {
+    "snapshotDir": ".texleaf/snapshots",
+    "lockFile": ".texleaf/lock",
+    "lastSyncedFile": ".texleaf/last_synced_commit",
+    "lastRemoteSnapshotFile": ".texleaf/last_remote_snapshot_commit"
+  },
+  "ignore": {
+    "patterns": [
+      ".git/",
+      ".gitignore",
+      ".env",
+      ".texleaf/"
+    ]
   }
 }
 ```
 
-Never commit cookies or files under `.texleaf/`.
+`.texleaf/config.json` records the project/platform binding. The managed
+`texleaf-remote` branch stores the latest imported Overleaf snapshot.
+
+Never commit cookies or local sync metadata under `.texleaf/`.
+
+## Development
+
+```bash
+npm install
+npm run build
+npm test
+node dist/cli.js --help
+```
+
+## Packaging The CLI
+
+To build a distributable npm tarball:
+
+```bash
+npm pack
+ls -lh texleaf-sync-*.tgz
+```
+
+The tarball contains `dist/`, the READMEs, and the license file. It can be
+installed with `npm install -g ./texleaf-sync-0.1.0.tgz`.
