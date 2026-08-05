@@ -1,0 +1,166 @@
+import path from "node:path";
+
+import { ConfigError } from "./errors.js";
+import { ensureDir, exists, readJson, writeJsonAtomic } from "./files.js";
+import {
+  type PlatformName,
+  globalSessionFile,
+  hostPlatform,
+  isPlatformName,
+  normalizeHost,
+  platformDisablesTls
+} from "./platform.js";
+
+export interface TexleafConfig {
+  project: {
+    host: string;
+    projectId: string;
+    projectName: string;
+    platform: PlatformName | "custom";
+  };
+  git: {
+    mainBranch: string;
+    remoteBranch: string;
+  };
+  backend: {
+    timeoutMs: number;
+    sslVerify: boolean;
+  };
+  auth: {
+    profile: string;
+    sessionFile: string;
+  };
+  sync: {
+    snapshotDir: string;
+    lockFile: string;
+    lastSyncedFile: string;
+    lastRemoteSnapshotFile: string;
+  };
+  ignore: {
+    patterns: string[];
+  };
+}
+
+export const defaultIgnorePatterns = [
+  ".git/",
+  ".gitignore",
+  ".env",
+  ".texleaf/",
+  "*.aux",
+  "*.bcf",
+  "*.blg",
+  "*.fdb_latexmk",
+  "*.fls",
+  "*.glg",
+  "*.glo",
+  "*.gls",
+  "*.idx",
+  "*.ilg",
+  "*.ind",
+  "*.lof",
+  "*.log",
+  "*.lot",
+  "*.nav",
+  "*.out",
+  "*.run.xml",
+  "*.snm",
+  "*.synctex.gz",
+  "*.toc",
+  "*.vrb",
+  "*.xdv"
+];
+
+export function configPath(repo: string): string {
+  return path.join(repo, ".texleaf", "config.json");
+}
+
+export function resolveRepoPath(repo: string, value: string): string {
+  return path.isAbsolute(value) ? value : path.join(repo, value);
+}
+
+export function defaultConfig(args: {
+  repoRoot: string;
+  host: string;
+  projectId: string;
+  projectName: string;
+  platform?: PlatformName | "custom";
+  profile?: string;
+  sessionFile?: string;
+  sslVerify?: boolean;
+}): TexleafConfig {
+  const host = normalizeHost(args.host);
+  const platform = args.platform ?? hostPlatform(host);
+  return {
+    project: {
+      host,
+      projectId: args.projectId,
+      projectName: args.projectName,
+      platform
+    },
+    git: {
+      mainBranch: "main",
+      remoteBranch: "texleaf-remote"
+    },
+    backend: {
+      timeoutMs: 16_000,
+      sslVerify: args.sslVerify ?? !platformDisablesTls(platform, host)
+    },
+    auth: {
+      profile: args.profile ?? "default",
+      sessionFile:
+        args.sessionFile ??
+        (isPlatformName(platform) ? globalSessionFile(platform, args.profile) : ".texleaf/session.json")
+    },
+    sync: {
+      snapshotDir: ".texleaf/snapshots",
+      lockFile: ".texleaf/lock",
+      lastSyncedFile: ".texleaf/last_synced_commit",
+      lastRemoteSnapshotFile: ".texleaf/last_remote_snapshot_commit"
+    },
+    ignore: {
+      patterns: [...defaultIgnorePatterns]
+    }
+  };
+}
+
+export async function loadConfig(repo: string): Promise<TexleafConfig> {
+  const target = configPath(repo);
+  if (!(await exists(target))) throw new ConfigError(`Missing config file: ${target}`);
+  const config = await readJson<TexleafConfig>(target);
+  if (!config.project?.projectId) throw new ConfigError("Invalid .texleaf/config.json: missing project.projectId");
+  return {
+    ...defaultConfig({
+      repoRoot: repo,
+      host: config.project.host,
+      projectId: config.project.projectId,
+      projectName: config.project.projectName ?? config.project.projectId,
+      platform: config.project.platform ?? hostPlatform(config.project.host),
+      profile: config.auth?.profile,
+      sessionFile: config.auth?.sessionFile,
+      sslVerify: config.backend?.sslVerify
+    }),
+    ...config,
+    project: {
+      ...config.project,
+      host: normalizeHost(config.project.host),
+      platform: config.project.platform ?? hostPlatform(config.project.host)
+    }
+  };
+}
+
+export async function writeConfig(repo: string, config: TexleafConfig): Promise<void> {
+  await writeJsonAtomic(configPath(repo), config, 0o600);
+}
+
+export async function ensureProjectGitignore(repo: string): Promise<void> {
+  const target = path.join(repo, ".gitignore");
+  const desired = [".texleaf/", ".env"];
+  let current = "";
+  if (await exists(target)) current = await import("node:fs/promises").then((fs) => fs.readFile(target, "utf8"));
+  const lines = new Set(current.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+  const missing = desired.filter((line) => !lines.has(line));
+  if (!missing.length) return;
+  const prefix = current && !current.endsWith("\n") ? "\n" : "";
+  await ensureDir(path.dirname(target));
+  await import("node:fs/promises").then((fs) => fs.writeFile(target, `${current}${prefix}${missing.join("\n")}\n`, "utf8"));
+}

@@ -1,0 +1,40 @@
+{
+  "name": "texleaf-sync",
+  "version": "0.1.0",
+  "description": "Git-safe TypeScript CLI for syncing Overleaf Community Edition projects.",
+  "type": "module",
+  "license": "MIT",
+  "author": "",
+  "bin": {
+    "texleaf": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.js",
+    "start": "node dist/cli.js",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "undici": "^6.28.0",
+    "ws": "^8.18.0",
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "@types/yauzl": "^2.10.3",
+    "typescript": "^5.7.0"
+  }
+}

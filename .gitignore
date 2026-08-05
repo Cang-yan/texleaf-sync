@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.texleaf/
+.env
+.DS_Store
+npm-debug.log*
+*.code-workspace
+test/
