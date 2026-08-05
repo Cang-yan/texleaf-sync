@@ -33,11 +33,18 @@ npm link
 texleaf --version
 ```
 
-### 2. Log in once
+### 2. Log in once with a platform
 
-For CAS Cloud Overleaf Community Edition, the interactive login asks for
-`latex-session` and `overleaf.sid`, then stores the session at
-`~/.texleaf/sessions/cstcloud.json`.
+Choose a known login platform with `--platform`. Saved sessions are stored under
+`~/.texleaf/sessions/` and later reused by cloned projects.
+
+Supported platforms:
+
+- `cstcloud` for CAS Cloud Overleaf Community Edition at
+  `https://latex.cstcloud.cn`. The interactive login asks for `latex-session`
+  and `overleaf.sid`.
+- `overleaf` for `https://www.overleaf.com`. The interactive login asks for
+  `overleaf_session2`.
 
 ```bash
 texleaf auth login --platform cstcloud
@@ -50,6 +57,9 @@ You can also pass a copied browser Cookie header through standard input:
 printf '%s' 'latex-session=...; overleaf.sid=...' | \
   texleaf auth login --platform cstcloud --cookie-stdin
 ```
+
+For custom Overleaf Community Edition deployments, use `--host` instead of
+`--platform`.
 
 ### 3. Clone an Overleaf project
 

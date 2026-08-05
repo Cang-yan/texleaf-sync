@@ -33,11 +33,18 @@ npm link
 texleaf --version
 ```
 
-### 2. 登录一次
+### 2. 选择平台并登录一次
 
-中科院 CAS Cloud Overleaf Community Edition 内置为 `cstcloud` 平台。交互式登录会
-提示输入 `latex-session` 和 `overleaf.sid`，然后把 session 保存到
-`~/.texleaf/sessions/cstcloud.json`。
+通过 `--platform` 指定已知登录平台。保存后的 session 会放在
+`~/.texleaf/sessions/` 下，之后 clone 出来的项目会复用对应平台的 session。
+
+支持的平台：
+
+- `cstcloud`：中科院 CAS Cloud Overleaf Community Edition，
+  `https://latex.cstcloud.cn`。交互式登录会提示输入 `latex-session` 和
+  `overleaf.sid`。
+- `overleaf`：`https://www.overleaf.com`。交互式登录会提示输入
+  `overleaf_session2`。
 
 ```bash
 texleaf auth login --platform cstcloud
@@ -50,6 +57,8 @@ texleaf auth status --platform cstcloud
 printf '%s' 'latex-session=...; overleaf.sid=...' | \
   texleaf auth login --platform cstcloud --cookie-stdin
 ```
+
+自定义 Overleaf Community Edition 部署使用 `--host`，不用 `--platform`。
 
 ### 3. Clone 一个 Overleaf 项目
 
