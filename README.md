@@ -11,14 +11,14 @@ Node.js 20 or newer is required.
 Install from a release URL:
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.0/texleaf-sync-0.1.0.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.1/texleaf-sync-0.1.1.tgz
 texleaf --version
 ```
 
 Or install a downloaded release tarball:
 
 ```bash
-npm install -g ./texleaf-sync-0.1.0.tgz
+npm install -g ./texleaf-sync-0.1.1.tgz
 texleaf --version
 ```
 
@@ -33,33 +33,29 @@ npm link
 texleaf --version
 ```
 
-### 2. Log in once with a platform
+### 2. Log in once
 
-Choose a known login platform with `--platform`. Saved sessions are stored under
-`~/.texleaf/sessions/` and later reused by cloned projects.
+Run interactive login and choose a target:
 
-Supported platforms:
+```bash
+texleaf auth login
+```
 
-- `cstcloud` for CAS Cloud Overleaf Community Edition at
+The prompt offers:
+
+- `1` for `cstcloud`, CAS Cloud Overleaf Community Edition at
   `https://latex.cstcloud.cn`. The interactive login asks for `latex-session`
   and `overleaf.sid`.
-- `overleaf` for `https://www.overleaf.com`. The interactive login asks for
+- `2` for `overleaf`, `https://www.overleaf.com`. The interactive login asks for
   `overleaf_session2`.
+- `3` for a custom Overleaf Community Edition host.
 
-```bash
-texleaf auth login --platform cstcloud
-texleaf auth status --platform cstcloud
-```
+Known-platform sessions are saved under `~/.texleaf/sessions/`. Custom-host
+sessions are saved to `.texleaf/session.json` in the current directory unless
+`--session-file` is provided.
 
-You can also pass a copied browser Cookie header through standard input:
-
-```bash
-printf '%s' 'latex-session=...; overleaf.sid=...' | \
-  texleaf auth login --platform cstcloud --cookie-stdin
-```
-
-For custom Overleaf Community Edition deployments, use `--host` instead of
-`--platform`.
+If you already know the target, `--platform cstcloud`, `--platform overleaf`,
+or `--host http://localhost` can skip the selection prompt.
 
 ### 3. Clone an Overleaf project
 
@@ -82,6 +78,18 @@ The compatibility form also works:
 ```bash
 texleaf clone --platform cstcloud --project-id 67ab12cd34ef567890abcdef
 ```
+
+For a self-hosted Overleaf Community Edition deployment, pass the base URL with
+`--host`:
+
+```bash
+cd ~/papers
+texleaf clone --host http://localhost 67ab12cd34ef567890abcdef
+cd PROJECT_NAME_FROM_OVERLEAF
+```
+
+If you saved the custom-host session somewhere else, pass the same
+`--session-file` to both `auth login` and `clone`.
 
 ### 4. Edit, review, and push
 
@@ -117,11 +125,11 @@ writes back to Overleaf only happen from committed local changes.
 
 ## Current Status
 
-Current version: CLI `0.1.0`.
+Current version: CLI `0.1.1`.
 
 Important commands:
 
-- `texleaf auth login` saves browser cookies for a known platform or custom host.
+- `texleaf auth login` saves a reusable Overleaf session.
 - `texleaf auth status` validates the saved session.
 - `texleaf auth logout` deletes a saved session.
 - `texleaf clone` downloads an Overleaf project into a new local Git repository.
@@ -142,17 +150,19 @@ Known platforms store global sessions under `~/.texleaf/sessions/`:
 - `--platform overleaf` uses `https://www.overleaf.com` and expects
   `overleaf_session2`.
 
-For custom Overleaf Community Edition hosts, pass `--host` and provide the full
-Cookie header:
+For custom Overleaf Community Edition hosts, pass `--host`. Password login is
+usually the simplest path for local Docker and self-hosted deployments; pass
+`--email` and let the CLI prompt for the password.
 
-```bash
-printf '%s' 'sharelatex.sid=...' | \
-  texleaf auth login --host https://overleaf.example.com --cookie-stdin
-```
+If password login is blocked by SSO, captcha, or another local policy, run
+cookie login interactively and paste the browser Cookie header when prompted.
+Self-hosted Community Edition deployments commonly use `sharelatex.sid`, but
+the exact cookie name can vary with local configuration, so use the browser's
+actual Cookie header for that host.
 
-Prefer `--cookie-stdin` or the interactive prompt. Session cookies grant access
-to your account: never post them in issues, paste them into logs, or commit
-`.texleaf/session.json` or files under `~/.texleaf/sessions/`.
+Session cookies grant access to your account: never post them in issues, paste
+them into logs, or commit `.texleaf/session.json` or files under
+`~/.texleaf/sessions/`.
 
 For `https://latex.cstcloud.cn`, TLS verification is disabled by default because
 that deployment's certificate chain can fail in local CLI websocket clients.
@@ -282,4 +292,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 The tarball contains `dist/`, the READMEs, and the license file. It can be
-installed with `npm install -g ./texleaf-sync-0.1.0.tgz`.
+installed with `npm install -g ./texleaf-sync-0.1.1.tgz`.

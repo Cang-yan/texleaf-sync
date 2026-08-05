@@ -11,14 +11,14 @@ English: [README.md](README.md)
 通过 release URL 安装：
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.0/texleaf-sync-0.1.0.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.1/texleaf-sync-0.1.1.tgz
 texleaf --version
 ```
 
 或者安装已经下载到本地的 release tarball：
 
 ```bash
-npm install -g ./texleaf-sync-0.1.0.tgz
+npm install -g ./texleaf-sync-0.1.1.tgz
 texleaf --version
 ```
 
@@ -33,32 +33,28 @@ npm link
 texleaf --version
 ```
 
-### 2. 选择平台并登录一次
+### 2. 登录一次
 
-通过 `--platform` 指定已知登录平台。保存后的 session 会放在
-`~/.texleaf/sessions/` 下，之后 clone 出来的项目会复用对应平台的 session。
+运行交互式登录，然后选择目标：
 
-支持的平台：
+```bash
+texleaf auth login
+```
 
-- `cstcloud`：中科院 CAS Cloud Overleaf Community Edition，
+提示中可以选择：
+
+- `1`：`cstcloud`，中科院 CAS Cloud Overleaf Community Edition，
   `https://latex.cstcloud.cn`。交互式登录会提示输入 `latex-session` 和
   `overleaf.sid`。
-- `overleaf`：`https://www.overleaf.com`。交互式登录会提示输入
+- `2`：`overleaf`，`https://www.overleaf.com`。交互式登录会提示输入
   `overleaf_session2`。
+- `3`：自定义 Overleaf Community Edition host。
 
-```bash
-texleaf auth login --platform cstcloud
-texleaf auth status --platform cstcloud
-```
+已知平台的 session 会保存到 `~/.texleaf/sessions/`。自定义 host 的 session 默认
+保存到当前目录的 `.texleaf/session.json`，除非显式传 `--session-file`。
 
-也可以把浏览器里复制出来的 Cookie header 通过标准输入传入：
-
-```bash
-printf '%s' 'latex-session=...; overleaf.sid=...' | \
-  texleaf auth login --platform cstcloud --cookie-stdin
-```
-
-自定义 Overleaf Community Edition 部署使用 `--host`，不用 `--platform`。
+如果已经知道目标，也可以用 `--platform cstcloud`、`--platform overleaf` 或
+`--host http://localhost` 跳过选择提示。
 
 ### 3. Clone 一个 Overleaf 项目
 
@@ -81,6 +77,17 @@ cd PROJECT_NAME_FROM_OVERLEAF
 ```bash
 texleaf clone --platform cstcloud --project-id 67ab12cd34ef567890abcdef
 ```
+
+自部署 Overleaf Community Edition 用 `--host` 传入服务地址：
+
+```bash
+cd ~/papers
+texleaf clone --host http://localhost 67ab12cd34ef567890abcdef
+cd PROJECT_NAME_FROM_OVERLEAF
+```
+
+如果自定义 host 的 session 保存在其他位置，`auth login` 和 `clone` 都需要传同一个
+`--session-file`。
 
 ### 4. 编辑、审查、推送
 
@@ -113,11 +120,11 @@ Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交�
 
 ## 当前状态
 
-当前版本：CLI `0.1.0`。
+当前版本：CLI `0.1.1`。
 
 主要命令：
 
-- `texleaf auth login`：保存已知平台或自定义 host 的浏览器 Cookie。
+- `texleaf auth login`：保存可复用的 Overleaf session。
 - `texleaf auth status`：验证已保存 session。
 - `texleaf auth logout`：删除已保存 session。
 - `texleaf clone`：下载 Overleaf 项目并创建本地 Git 仓库。
@@ -137,16 +144,16 @@ Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交�
 - `--platform overleaf` 使用 `https://www.overleaf.com`，需要
   `overleaf_session2`。
 
-自定义 Overleaf Community Edition host 可以传 `--host`，并提供完整 Cookie header：
+自定义 Overleaf Community Edition host 使用 `--host`。本地 Docker 或自部署服务通常
+直接用用户名密码登录最省事；传 `--email` 后，CLI 会提示输入密码。
 
-```bash
-printf '%s' 'sharelatex.sid=...' | \
-  texleaf auth login --host https://overleaf.example.com --cookie-stdin
-```
+如果密码登录被 SSO、验证码或本地策略拦住，可以运行交互式 Cookie 登录，并在提示符里
+粘贴浏览器 Cookie header。自部署 Community Edition 常见 Cookie 名称是
+`sharelatex.sid`，但实际名称可能随本地配置变化：按当前 host 的浏览器 Cookie header
+为准。
 
-优先使用 `--cookie-stdin` 或交互式输入。Session cookie 代表账号访问权限：不要把它
-发到 issue、粘进日志，也不要提交 `.texleaf/session.json` 或
-`~/.texleaf/sessions/` 下的文件。
+Session cookie 代表账号访问权限：不要把它发到 issue、粘进日志，也不要提交
+`.texleaf/session.json` 或 `~/.texleaf/sessions/` 下的文件。
 
 对于 `https://latex.cstcloud.cn`，CLI 默认关闭 TLS 校验，因为该部署在本地 CLI
 websocket 客户端中可能出现证书链校验失败。其他 host 只有在明确知道信任边界时才
@@ -274,4 +281,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 tarball 会包含 `dist/`、README 和 LICENSE，可用
-`npm install -g ./texleaf-sync-0.1.0.tgz` 安装。
+`npm install -g ./texleaf-sync-0.1.1.tgz` 安装。

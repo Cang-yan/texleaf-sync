@@ -1,6 +1,6 @@
 {
   "name": "texleaf-sync",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Git-safe TypeScript CLI for syncing Overleaf Community Edition projects.",
   "type": "module",
   "license": "MIT",

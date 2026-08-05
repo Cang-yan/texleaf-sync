@@ -5,11 +5,11 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { Command } from "commander";
 
-import { type AuthSession, checkSession, loadSession, saveSession, sessionFromCookieHeader } from "./auth.js";
+import { type AuthSession, checkSession, loadSession, loginWithPassword, saveSession, sessionFromCookieHeader } from "./auth.js";
 import { loadConfig, resolveRepoPath } from "./config.js";
 import { TexleafError } from "./errors.js";
 import { exists } from "./files.js";
-import { info } from "./log.js";
+import { warn } from "./log.js";
 import {
   type PlatformName,
   globalSessionFile,
@@ -28,7 +28,7 @@ const program = new Command();
 program
   .name("texleaf")
   .description("Git-safe Overleaf Community Edition sync CLI")
-  .version("0.1.0");
+  .version("0.1.1");
 
 program
   .command("clone")
@@ -85,17 +85,18 @@ program
     await new SyncEngine(process.cwd()).verify(Boolean(options.allowDiff));
   });
 
-const auth = program.command("auth").description("manage saved Overleaf cookies");
+const auth = program.command("auth").description("manage saved Overleaf sessions");
 
 auth
   .command("login")
-  .description("save a browser-cookie session")
+  .description("save a reusable Overleaf session")
   .option("--platform <name>", "known platform: cstcloud or overleaf")
   .option("--host <url>", "custom Overleaf host")
   .option("--profile <name>", "auth profile", "default")
   .option("--session-file <file>", "session JSON file")
-  .option("--cookie <header>", "raw Cookie header")
-  .option("--cookie-stdin", "read raw Cookie header from stdin")
+  .option("--email <email>", "Overleaf email for password login")
+  .option("--password <password>", "Overleaf password")
+  .option("--password-stdin", "read Overleaf password from stdin")
   .option("--insecure", "disable TLS verification")
   .action(async (options) => {
     await authLogin(options);
@@ -143,18 +144,24 @@ program.parseAsync(normalizeCloneArgs(process.argv)).catch((error: unknown) => {
 });
 
 async function authLogin(options: Record<string, any>): Promise<void> {
-  const interactive = !options.cookie && !options.cookieStdin;
+  const passwordMode = Boolean(options.email);
+  if (options.password && options.passwordStdin) throw new TexleafError("Use only one password input method.");
+  if (!passwordMode && (options.password || options.passwordStdin)) {
+    throw new TexleafError("Use --password or --password-stdin only with --email.");
+  }
+  const interactive = !passwordMode;
   const target = interactive ? await interactiveAuthTarget(options) : await resolveAuthTarget(options, true);
-  const cookieHeader = options.cookie ?? (options.cookieStdin ? await readStdin() : await promptCookieHeader(target.platform));
   const sslVerify = options.insecure ? false : !platformDisablesTls(target.platform, target.host);
-  const session = sessionFromCookieHeader({
-    host: target.host,
-    profile: options.profile ?? "default",
-    cookieHeader,
-    sslVerify
-  });
-  const status = await checkSession({ host: target.host, session });
-  if (!status.loggedIn) throw new TexleafError(`Cookie session is not logged in to ${target.host}: ${status.error ?? "unknown error"}`);
+  const profile = options.profile ?? "default";
+  const session = passwordMode
+    ? await loginWithPassword({
+        host: target.host,
+        profile,
+        email: options.email,
+        password: await passwordFromOptions(options),
+        sslVerify
+      })
+    : await interactiveSession(target, sslVerify, profile);
   await saveSession(target.sessionFile, session);
   console.log(`Saved session to ${target.sessionFile}`);
 }
@@ -232,6 +239,7 @@ async function configHost(): Promise<string> {
 }
 
 async function promptCookieHeader(platform: PlatformName | "custom"): Promise<string> {
+  if (!process.stdin.isTTY) throw new TexleafError("Cookie login is interactive; run it in a terminal.");
   const cookieNames = platformCookieNames(platform);
   const rl = readline.createInterface({ input, output });
   try {
@@ -248,12 +256,70 @@ async function promptCookieHeader(platform: PlatformName | "custom"): Promise<st
   }
 }
 
-async function readStdin(): Promise<string> {
+async function cookieLoginSession(target: AuthTarget, sslVerify: boolean, profile: string) {
+  const cookieHeader = await promptCookieHeader(target.platform);
+  const session = sessionFromCookieHeader({
+    host: target.host,
+    profile,
+    cookieHeader,
+    sslVerify
+  });
+  const status = await checkSession({ host: target.host, session });
+  if (!status.loggedIn) throw new TexleafError(`Cookie session is not logged in to ${target.host}: ${status.error ?? "unknown error"}`);
+  return session;
+}
+
+async function interactiveSession(target: AuthTarget, sslVerify: boolean, profile: string): Promise<AuthSession> {
+  if (target.platform !== "custom") return await cookieLoginSession(target, sslVerify, profile);
+  const email = await promptOptional("Overleaf email (leave empty to paste Cookie header): ");
+  if (!email) return await cookieLoginSession(target, sslVerify, profile);
+  return await loginWithPassword({
+    host: target.host,
+    profile,
+    email,
+    password: await promptPassword(),
+    sslVerify
+  });
+}
+
+async function passwordFromOptions(options: Record<string, any>): Promise<string> {
+  if (options.password) {
+    warn("--password can expose credentials in process listings; prefer the prompt or --password-stdin.");
+    return options.password;
+  }
+  if (options.passwordStdin) return await readStdin("password");
+  return await promptPassword();
+}
+
+async function readStdin(label: string): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
   const value = Buffer.concat(chunks).toString("utf8").trim();
-  if (!value) throw new TexleafError("No Cookie header was provided on standard input.");
+  if (!value) throw new TexleafError(`No ${label} was provided on standard input.`);
   return value;
+}
+
+async function promptOptional(question: string): Promise<string> {
+  if (!process.stdin.isTTY) throw new TexleafError("Interactive login must be run in a terminal.");
+  const rl = readline.createInterface({ input, output });
+  try {
+    return (await rl.question(question)).trim();
+  } finally {
+    rl.close();
+  }
+}
+
+async function promptPassword(): Promise<string> {
+  if (!process.stdin.isTTY) throw new TexleafError("Pass --password-stdin when standard input is not interactive.");
+  warn("For scripted login, prefer --password-stdin so the password is not exposed in process listings.");
+  const rl = readline.createInterface({ input, output });
+  try {
+    const password = await rl.question("Overleaf password: ");
+    if (!password) throw new TexleafError("Password is required.");
+    return password;
+  } finally {
+    rl.close();
+  }
 }
 
 function normalizeCloneArgs(argv: string[]): string[] {
