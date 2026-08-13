@@ -55,7 +55,9 @@ export class OverleafBackend {
       timeoutMs: this.config.backend.timeoutMs
     });
     if (!status.loggedIn) {
-      throw new BackendError(`Overleaf session is not logged in: ${status.error ?? "unknown error"}`);
+      throw new BackendError(
+        `Overleaf session is not logged in: ${status.error ?? "unknown error"}\nPlease log in again: texleaf auth login`
+      );
     }
   }
 
