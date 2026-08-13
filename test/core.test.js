@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { cleanProjectTitle, textReplacementOperation } from "../dist/backend.js";
 import { loadSession, loginWithPassword, saveSession, sessionFromCookieHeader } from "../dist/auth.js";
 import { defaultConfig } from "../dist/config.js";
+import { hasDiffBetween, mergeBase } from "../dist/git.js";
 import { globalSessionFile, hostPlatform, parseProjectLocator } from "../dist/platform.js";
 import { isIgnored, normalizeProjectPath } from "../dist/snapshot.js";
 
@@ -91,6 +93,39 @@ test("parses Overleaf project URLs", () => {
     host: "https://cn.overleaf.com",
     platform: "overleaf"
   });
+});
+
+test("freshness check ignores unpushed local commits", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-freshness-"));
+  const git = (args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  try {
+    git(["init", "-b", "main"]);
+    git(["config", "user.name", "tester"]);
+    git(["config", "user.email", "tester@example.invalid"]);
+    await fs.writeFile(path.join(dir, "base.tex"), "base");
+    git(["add", "base.tex"]);
+    git(["commit", "-m", "base"]);
+    git(["branch", "texleaf-remote"]);
+    await fs.writeFile(path.join(dir, "remote.tex"), "remote");
+    git(["add", "remote.tex"]);
+    git(["commit", "-m", "remote change"]);
+    const remoteHead = git(["rev-parse", "texleaf-remote"]).trim();
+    git(["merge", "--no-ff", "texleaf-remote", "-m", "merge remote"]);
+    await fs.writeFile(path.join(dir, "local.tex"), "local");
+    git(["add", "local.tex"]);
+    git(["commit", "-m", "local change"]);
+    git(["checkout", "texleaf-remote"]);
+    git(["commit", "--allow-empty", "-m", "overleaf: freshness snapshot"]);
+    git(["checkout", "main"]);
+    // Old buggy check: branch trees always differ while local commits are unpushed.
+    assert.equal(hasDiffBetween(dir, "texleaf-remote", "main"), true);
+    // Fixed check: remote has no new content relative to the merge base.
+    const base = mergeBase(dir, "texleaf-remote", "main");
+    assert.equal(base, remoteHead);
+    assert.equal(hasDiffBetween(dir, base, "texleaf-remote"), false);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("loads official Overleaf sessions across host aliases", async () => {

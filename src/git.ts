@@ -66,6 +66,12 @@ export function headCommit(repo: string, ref = "HEAD"): string {
   return runGit(repo, ["rev-parse", ref]).stdout.trim();
 }
 
+export function mergeBase(repo: string, a: string, b: string): string | undefined {
+  const result = runGit(repo, ["merge-base", a, b], { check: false });
+  const commit = result.stdout.trim();
+  return result.code === 0 && commit ? commit : undefined;
+}
+
 export function requireCleanWorktree(repo: string): void {
   if (worktreeChanges(repo).length) throw new DirtyWorktreeError();
 }

@@ -218,10 +218,11 @@ Then write:
 texleaf push
 ```
 
-Before writing, `texleaf push` imports a freshness snapshot and requires the
-local branch to still match the managed remote baseline. If newer Overleaf
-changes appear, it stages them through Git and stops so you can review and
-commit the merge before trying again.
+Before writing, `texleaf push` imports a freshness snapshot and checks it
+against the merge base of the current branch and the managed remote branch.
+Only when the remote actually has newer Overleaf content does it stage those
+changes through Git and stop, so you can review and commit the merge before
+trying again. Unpushed local commits alone never block the push.
 
 ### Check status or verify
 

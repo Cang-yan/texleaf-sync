@@ -207,9 +207,10 @@ texleaf push --dry-run
 texleaf push
 ```
 
-写入前，`texleaf push` 会导入 freshness snapshot，并要求本地分支仍然匹配受管理的
-远端基线。如果发现更新的 Overleaf 变更，它会通过 Git 暂存这些变更并停止，等你审查
-并提交合并结果后再重试。
+写入前，`texleaf push` 会导入 freshness snapshot，并以当前分支与受管理远端
+分支的共同祖先（merge-base）为基准，判断远端是否有新内容。只有远端确实有更新
+的 Overleaf 变更时，它才会通过 Git 暂存这些变更并停止，等你审查并提交合并结果
+后再重试；本地未推送的提交本身不会阻塞推送。
 
 ### 查看状态或验证
 

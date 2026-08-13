@@ -12,6 +12,7 @@ import {
   hasDiffBetween,
   headCommit,
   importSnapshotToBranch,
+  mergeBase,
   mergeBranch,
   requireCleanWorktree,
   requireNoConflicts,
@@ -87,14 +88,17 @@ export class SyncEngine {
       requireCleanWorktree(this.root);
       await backend.authenticate();
       const remoteCommit = await this.importLatestSnapshot(config, backend, "overleaf: snapshot");
-      if (!hasDiffBetween(this.root, config.git.remoteBranch, currentBranch(this.root))) {
+      const remoteBranch = config.git.remoteBranch;
+      const mainBranch = currentBranch(this.root);
+      const base = mergeBase(this.root, remoteBranch, mainBranch);
+      if (base !== undefined && !hasDiffBetween(this.root, base, remoteBranch)) {
         await this.writeMetadata(config.sync.lastRemoteSnapshotFile, remoteCommit);
         await this.writeMetadata(config.sync.lastSyncedFile, headCommit(this.root));
-        info("Pull completed; local branch already matches remote snapshot.");
+        info("Pull completed; remote has no new changes.");
         return;
       }
-      info(`Merging ${config.git.remoteBranch} into ${currentBranch(this.root)}...`);
-      mergeBranch(this.root, config.git.remoteBranch, false);
+      info(`Merging ${remoteBranch} into ${mainBranch}...`);
+      mergeBranch(this.root, remoteBranch, false);
       await this.writeMetadata(config.sync.lastRemoteSnapshotFile, remoteCommit);
       if (worktreeChanges(this.root).length) {
         info("Pull staged remote changes. Review and commit them before pushing.");
@@ -153,7 +157,8 @@ export class SyncEngine {
         info("Running freshness pull before push...");
         await backend.authenticate();
         const remoteCommit = await this.importLatestSnapshot(config, backend, "overleaf: freshness snapshot");
-        if (hasDiffBetween(this.root, config.git.remoteBranch, currentBranch(this.root))) {
+        const base = mergeBase(this.root, config.git.remoteBranch, currentBranch(this.root));
+        if (base === undefined || hasDiffBetween(this.root, base, config.git.remoteBranch)) {
           mergeBranch(this.root, config.git.remoteBranch, false);
           await this.writeMetadata(config.sync.lastRemoteSnapshotFile, remoteCommit);
           throw new DirtyWorktreeError("Freshness pull staged remote changes. Review and commit them before push.");
