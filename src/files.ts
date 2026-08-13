@@ -42,3 +42,12 @@ export async function isEmptyDirectory(target: string): Promise<boolean> {
     return true;
   }
 }
+
+export async function removeDirectoriesByPrefix(dir: string, prefix: string): Promise<void> {
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
+      .map((entry) => fs.rm(path.join(dir, entry.name), { recursive: true, force: true }))
+  );
+}

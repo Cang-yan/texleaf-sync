@@ -9,6 +9,7 @@ import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { cleanProjectTitle, textReplacementOperation } from "../dist/backend.js";
 import { loadSession, loginWithPassword, saveSession, sessionFromCookieHeader } from "../dist/auth.js";
 import { defaultConfig } from "../dist/config.js";
+import { exists, removeDirectoriesByPrefix } from "../dist/files.js";
 import { hasDiffBetween, mergeBase } from "../dist/git.js";
 import { globalSessionFile, hostPlatform, parseProjectLocator } from "../dist/platform.js";
 import { isIgnored, normalizeProjectPath } from "../dist/snapshot.js";
@@ -36,6 +37,23 @@ test("matches sync ignore patterns", () => {
   assert.equal(isIgnored(".texleaf/config.json", [".texleaf/"]), true);
   assert.equal(isIgnored("main.tex", [".texleaf/"]), false);
   assert.equal(isIgnored("build/main.aux", ["*.aux"]), true);
+});
+
+test("prunes stale snapshot directories by prefix", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-snaps-"));
+  try {
+    await fs.mkdir(path.join(dir, "snapshot-aaa"));
+    await fs.mkdir(path.join(dir, "snapshot-bbb"));
+    await fs.mkdir(path.join(dir, "keepme"));
+    await fs.writeFile(path.join(dir, "snapshot-file"), "x");
+    await removeDirectoriesByPrefix(dir, "snapshot-");
+    assert.equal(await exists(path.join(dir, "snapshot-aaa")), false);
+    assert.equal(await exists(path.join(dir, "snapshot-bbb")), false);
+    assert.equal(await exists(path.join(dir, "keepme")), true);
+    assert.equal(await exists(path.join(dir, "snapshot-file")), true);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("creates known-platform config with global session", async () => {

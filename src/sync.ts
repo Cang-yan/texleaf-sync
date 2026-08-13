@@ -20,7 +20,7 @@ import {
   runGit,
   worktreeChanges
 } from "./git.js";
-import { ensureDir, exists, isDirectory, isEmptyDirectory, writeJsonAtomic } from "./files.js";
+import { ensureDir, exists, isDirectory, isEmptyDirectory, removeDirectoriesByPrefix, writeJsonAtomic } from "./files.js";
 import { info } from "./log.js";
 import { type PlatformName, globalSessionFile, hostPlatform, normalizeHost, platformDisablesTls, platformHost } from "./platform.js";
 import { collectTreeHashes, compareTrees } from "./snapshot.js";
@@ -137,12 +137,16 @@ export class SyncEngine {
     await withLock(resolveRepoPath(this.root, config.sync.lockFile), async () => {
       await backend.authenticate();
       const snapshot = await this.downloadSnapshot(config, backend);
-      const remote = await collectTreeHashes(snapshot, config.ignore.patterns);
-      const local = await collectTreeHashes(this.root, config.ignore.patterns);
-      const diff = compareTrees(remote, local);
-      printTreeDiff(diff);
-      if ((diff.added.length || diff.modified.length || diff.deleted.length) && !allowDiff) {
-        throw new TexleafError("Remote snapshot differs from local normalized project state.");
+      try {
+        const remote = await collectTreeHashes(snapshot, config.ignore.patterns);
+        const local = await collectTreeHashes(this.root, config.ignore.patterns);
+        const diff = compareTrees(remote, local);
+        printTreeDiff(diff);
+        if ((diff.added.length || diff.modified.length || diff.deleted.length) && !allowDiff) {
+          throw new TexleafError("Remote snapshot differs from local normalized project state.");
+        }
+      } finally {
+        await fs.rm(snapshot, { recursive: true, force: true });
       }
     });
   }
@@ -170,23 +174,27 @@ export class SyncEngine {
       if (dryRun || !plan.length) return;
       await this.applyPushPlan(config, backend, plan);
       const snapshot = await this.downloadSnapshot(config, backend);
-      const remote = await collectTreeHashes(snapshot, config.ignore.patterns);
-      const local = await collectTreeHashes(this.root, config.ignore.patterns);
-      const diff = compareTrees(remote, local);
-      if (diff.added.length || diff.modified.length || diff.deleted.length) {
-        printTreeDiff(diff);
-        throw new TexleafError("Remote verification failed; sync metadata was not updated.");
+      try {
+        const remote = await collectTreeHashes(snapshot, config.ignore.patterns);
+        const local = await collectTreeHashes(this.root, config.ignore.patterns);
+        const diff = compareTrees(remote, local);
+        if (diff.added.length || diff.modified.length || diff.deleted.length) {
+          printTreeDiff(diff);
+          throw new TexleafError("Remote verification failed; sync metadata was not updated.");
+        }
+        const remoteCommit = await importSnapshotToBranch({
+          repo: this.root,
+          snapshotDir: snapshot,
+          branch: config.git.remoteBranch,
+          patterns: config.ignore.patterns,
+          message: "overleaf: snapshot after push"
+        });
+        await this.writeMetadata(config.sync.lastSyncedFile, headCommit(this.root));
+        await this.writeMetadata(config.sync.lastRemoteSnapshotFile, remoteCommit);
+        info("Push verification succeeded.");
+      } finally {
+        await fs.rm(snapshot, { recursive: true, force: true });
       }
-      const remoteCommit = await importSnapshotToBranch({
-        repo: this.root,
-        snapshotDir: snapshot,
-        branch: config.git.remoteBranch,
-        patterns: config.ignore.patterns,
-        message: "overleaf: snapshot after push"
-      });
-      await this.writeMetadata(config.sync.lastSyncedFile, headCommit(this.root));
-      await this.writeMetadata(config.sync.lastRemoteSnapshotFile, remoteCommit);
-      info("Push verification succeeded.");
     });
   }
 
@@ -196,13 +204,18 @@ export class SyncEngine {
     await writeConfig(repo, config);
     ensureGitRepo(repo, config.git.mainBranch);
     const snapshot = await this.downloadSnapshot(config, backend, repo);
-    const remoteCommit = await importSnapshotToBranch({
-      repo,
-      snapshotDir: snapshot,
-      branch: config.git.remoteBranch,
-      patterns: config.ignore.patterns,
-      message: "overleaf: initial snapshot"
-    });
+    let remoteCommit: string;
+    try {
+      remoteCommit = await importSnapshotToBranch({
+        repo,
+        snapshotDir: snapshot,
+        branch: config.git.remoteBranch,
+        patterns: config.ignore.patterns,
+        message: "overleaf: initial snapshot"
+      });
+    } finally {
+      await fs.rm(snapshot, { recursive: true, force: true });
+    }
     resetHard(repo, config.git.remoteBranch);
     await ensureProjectGitignore(repo);
     runGit(repo, ["add", "-A", "--", "."]);
@@ -216,18 +229,23 @@ export class SyncEngine {
 
   private async importLatestSnapshot(config: TexleafConfig, backend: OverleafBackend, message: string): Promise<string> {
     const snapshot = await this.downloadSnapshot(config, backend);
-    return await importSnapshotToBranch({
-      repo: this.root,
-      snapshotDir: snapshot,
-      branch: config.git.remoteBranch,
-      patterns: config.ignore.patterns,
-      message
-    });
+    try {
+      return await importSnapshotToBranch({
+        repo: this.root,
+        snapshotDir: snapshot,
+        branch: config.git.remoteBranch,
+        patterns: config.ignore.patterns,
+        message
+      });
+    } finally {
+      await fs.rm(snapshot, { recursive: true, force: true });
+    }
   }
 
   private async downloadSnapshot(config: TexleafConfig, backend: OverleafBackend, repo = this.root): Promise<string> {
     const snapshotRoot = resolveRepoPath(repo, config.sync.snapshotDir);
     await ensureDir(snapshotRoot);
+    await removeDirectoriesByPrefix(snapshotRoot, "snapshot-");
     const dir = await fs.mkdtemp(path.join(snapshotRoot, "snapshot-"));
     await backend.downloadSnapshot(config.project.projectId, dir);
     return dir;
