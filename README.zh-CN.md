@@ -11,14 +11,14 @@ English: [README.md](README.md)
 通过 release URL 安装：
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.2/texleaf-sync-0.1.2.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.3/texleaf-sync-0.1.3.tgz
 texleaf --version
 ```
 
 或者安装已经下载到本地的 release tarball：
 
 ```bash
-npm install -g ./texleaf-sync-0.1.2.tgz
+npm install -g ./texleaf-sync-0.1.3.tgz
 texleaf --version
 ```
 
@@ -128,7 +128,7 @@ Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交�
 
 ## 当前状态
 
-当前版本：CLI `0.1.2`。
+当前版本：CLI `0.1.3`。
 
 主要命令：
 
@@ -290,4 +290,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 tarball 会包含 `dist/`、README 和 LICENSE，可用
-`npm install -g ./texleaf-sync-0.1.2.tgz` 安装。
+`npm install -g ./texleaf-sync-0.1.3.tgz` 安装。

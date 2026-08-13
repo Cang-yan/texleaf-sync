@@ -30,7 +30,7 @@ const program = new Command();
 program
   .name("texleaf")
   .description("Git-safe Overleaf Community Edition sync CLI")
-  .version("0.1.2");
+  .version("0.1.3");
 
 program
   .command("clone")

@@ -11,14 +11,14 @@ Node.js 20 or newer is required.
 Install from a release URL:
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.2/texleaf-sync-0.1.2.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.3/texleaf-sync-0.1.3.tgz
 texleaf --version
 ```
 
 Or install a downloaded release tarball:
 
 ```bash
-npm install -g ./texleaf-sync-0.1.2.tgz
+npm install -g ./texleaf-sync-0.1.3.tgz
 texleaf --version
 ```
 
@@ -135,7 +135,7 @@ writes back to Overleaf only happen from committed local changes.
 
 ## Current Status
 
-Current version: CLI `0.1.2`.
+Current version: CLI `0.1.3`.
 
 Important commands:
 
@@ -303,4 +303,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 The tarball contains `dist/`, the READMEs, and the license file. It can be
-installed with `npm install -g ./texleaf-sync-0.1.2.tgz`.
+installed with `npm install -g ./texleaf-sync-0.1.3.tgz`.
