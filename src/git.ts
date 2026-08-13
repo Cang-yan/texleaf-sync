@@ -87,6 +87,12 @@ export function conflictedFiles(repo: string): string[] {
     .filter(Boolean);
 }
 
+export function gitIgnoredTrackedFiles(repo: string): string[] {
+  return runGit(repo, ["ls-files", "--cached", "--ignored", "--exclude-standard", "-z"], { check: false })
+    .stdout.split("\0")
+    .filter(Boolean);
+}
+
 export function requireNoConflicts(repo: string): void {
   const files = conflictedFiles(repo);
   if (files.length) throw new SyncConflictError(files);

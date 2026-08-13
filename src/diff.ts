@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 
-import { nameStatusDiff } from "./git.js";
+import { gitIgnoredTrackedFiles, nameStatusDiff } from "./git.js";
 import { isIgnored } from "./snapshot.js";
 
 export interface PushOperation {
@@ -26,11 +26,13 @@ const textExtensions = new Set([
 
 export async function buildPushPlan(repo: string, base: string, patterns: string[]): Promise<PushOperation[]> {
   const operations: PushOperation[] = [];
+  const gitIgnored = new Set(gitIgnoredTrackedFiles(repo));
   for (const row of nameStatusDiff(repo, base)) {
     const status = row[0];
     const oldPath = status.startsWith("R") ? row[1] : undefined;
     const projectPath = status.startsWith("R") ? row[2] : row[1];
     if (!projectPath || isIgnored(projectPath, patterns) || (oldPath && isIgnored(oldPath, patterns))) continue;
+    if (gitIgnored.has(projectPath) || (oldPath && gitIgnored.has(oldPath))) continue;
     const content = status === "D" ? undefined : await fs.readFile(`${repo}/${projectPath}`).catch(() => Buffer.alloc(0));
     operations.push({
       status,

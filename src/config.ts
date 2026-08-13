@@ -44,6 +44,7 @@ export interface TexleafConfig {
 export const defaultIgnorePatterns = [
   ".git/",
   ".gitignore",
+  ".DS_Store",
   ".env",
   ".texleaf/",
   "*.aux",

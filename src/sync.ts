@@ -9,6 +9,7 @@ import {
   branchExists,
   currentBranch,
   ensureGitRepo,
+  gitIgnoredTrackedFiles,
   hasDiffBetween,
   headCommit,
   importSnapshotToBranch,
@@ -139,7 +140,7 @@ export class SyncEngine {
       const snapshot = await this.downloadSnapshot(config, backend);
       try {
         const remote = await collectTreeHashes(snapshot, config.ignore.patterns);
-        const local = await collectTreeHashes(this.root, config.ignore.patterns);
+        const local = await this.localTreeHashes(config);
         const diff = compareTrees(remote, local);
         printTreeDiff(diff);
         if ((diff.added.length || diff.modified.length || diff.deleted.length) && !allowDiff) {
@@ -176,7 +177,7 @@ export class SyncEngine {
       const snapshot = await this.downloadSnapshot(config, backend);
       try {
         const remote = await collectTreeHashes(snapshot, config.ignore.patterns);
-        const local = await collectTreeHashes(this.root, config.ignore.patterns);
+        const local = await this.localTreeHashes(config);
         const diff = compareTrees(remote, local);
         if (diff.added.length || diff.modified.length || diff.deleted.length) {
           printTreeDiff(diff);
@@ -249,6 +250,12 @@ export class SyncEngine {
     const dir = await fs.mkdtemp(path.join(snapshotRoot, "snapshot-"));
     await backend.downloadSnapshot(config.project.projectId, dir);
     return dir;
+  }
+
+  private async localTreeHashes(config: TexleafConfig): Promise<Map<string, string>> {
+    const local = await collectTreeHashes(this.root, config.ignore.patterns);
+    for (const ignored of gitIgnoredTrackedFiles(this.root)) local.delete(ignored);
+    return local;
   }
 
   private async applyPushPlan(config: TexleafConfig, backend: OverleafBackend, plan: PushOperation[]): Promise<void> {

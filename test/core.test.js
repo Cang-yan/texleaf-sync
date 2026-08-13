@@ -9,8 +9,9 @@ import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 import { cleanProjectTitle, textReplacementOperation } from "../dist/backend.js";
 import { loadSession, loginWithPassword, saveSession, sessionFromCookieHeader } from "../dist/auth.js";
 import { defaultConfig } from "../dist/config.js";
+import { buildPushPlan } from "../dist/diff.js";
 import { exists, removeDirectoriesByPrefix } from "../dist/files.js";
-import { hasDiffBetween, mergeBase } from "../dist/git.js";
+import { gitIgnoredTrackedFiles, hasDiffBetween, mergeBase } from "../dist/git.js";
 import { globalSessionFile, hostPlatform, parseProjectLocator } from "../dist/platform.js";
 import { isIgnored, normalizeProjectPath } from "../dist/snapshot.js";
 
@@ -141,6 +142,29 @@ test("freshness check ignores unpushed local commits", async () => {
     const base = mergeBase(dir, "texleaf-remote", "main");
     assert.equal(base, remoteHead);
     assert.equal(hasDiffBetween(dir, base, "texleaf-remote"), false);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("excludes gitignored tracked files from the push plan", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-dsstore-"));
+  const git = (args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  try {
+    git(["init", "-b", "main"]);
+    git(["config", "user.name", "tester"]);
+    git(["config", "user.email", "tester@example.invalid"]);
+    await fs.writeFile(path.join(dir, ".gitignore"), ".DS_Store\n");
+    await fs.writeFile(path.join(dir, "main.tex"), "paper");
+    git(["add", ".gitignore", "main.tex"]);
+    git(["commit", "-m", "base"]);
+    const base = git(["rev-parse", "HEAD"]).trim();
+    await fs.writeFile(path.join(dir, ".DS_Store"), "junk");
+    git(["add", "-f", ".DS_Store"]);
+    git(["commit", "-m", "junk"]);
+    assert.deepEqual(gitIgnoredTrackedFiles(dir), [".DS_Store"]);
+    const plan = await buildPushPlan(dir, base, []);
+    assert.deepEqual(plan, []);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
