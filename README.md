@@ -8,17 +8,20 @@
 
 Node.js 20 or newer is required.
 
+**Automatic Chrome profile discovery and cookie import are available only on
+macOS.** On Windows and Linux, enter cookies manually with `texleaf auth login`.
+
 Install from a release URL:
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.3/texleaf-sync-0.1.3.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.4/texleaf-sync-0.1.4.tgz
 texleaf --version
 ```
 
 Or install a downloaded release tarball:
 
 ```bash
-npm install -g ./texleaf-sync-0.1.3.tgz
+npm install -g ./texleaf-sync-0.1.4.tgz
 texleaf --version
 ```
 
@@ -49,6 +52,15 @@ The prompt offers:
 - `2` for `overleaf`, `https://www.overleaf.com`. The interactive login asks for
   `overleaf_session2`.
 - `3` for a custom Overleaf Community Edition host.
+- `4` for **From Chrome** on macOS. This checks both `cstcloud` and `overleaf`
+  and saves each valid session automatically.
+
+If Chrome has valid sessions for both platforms, login finishes immediately.
+If neither can be imported, the CLI asks you to enter cookies manually and
+returns to this menu. If only some are imported, it lists the missing platforms
+and offers **Enter cookies manually** (return to this menu) or **Finish**.
+macOS may ask for access to the `Chrome Safe Storage` Keychain item. See
+[Authentication](#authentication) for profile selection and troubleshooting.
 
 Known-platform sessions are saved under `~/.texleaf/sessions/`. Custom-host
 sessions are saved to `.texleaf/session.json` in the current directory unless
@@ -135,7 +147,7 @@ writes back to Overleaf only happen from committed local changes.
 
 ## Current Status
 
-Current version: CLI `0.1.3`.
+Current version: CLI `0.1.4`.
 
 Important commands:
 
@@ -159,6 +171,42 @@ Known platforms store global sessions under `~/.texleaf/sessions/`:
   `latex-session` plus `overleaf.sid`.
 - `--platform overleaf` uses `https://www.overleaf.com` and expects
   `overleaf_session2`.
+
+On macOS, `--from-chrome` imports saved cookies from Google Chrome without
+copying their values into the terminal:
+
+```bash
+texleaf auth login --from-chrome
+texleaf auth login --platform cstcloud --from-chrome
+texleaf auth login --platform overleaf --from-chrome --chrome-profile "Profile 1"
+```
+
+Without `--platform` or `--host`, `--from-chrome` starts the same all-platform
+check as the menu option. It saves a separate file for each platform under
+`~/.texleaf/sessions/`, honoring `--profile`, and requests the Keychain password
+at most once per scan. Use `--session-file` only with an explicit `--platform`
+or `--host` for Chrome import. In a noninteractive terminal, an incomplete
+all-platform import exits with an error after saving any successful sessions.
+
+The CLI searches `Default` and `Profile N` in Chrome's standard user data
+directory. If several profiles contain matching cookies, specify one using
+`--chrome-profile "Default"`, `--chrome-profile "Profile 1"`, or an absolute
+profile directory path. This is separate from `--profile`, which names the
+saved texleaf session.
+
+The importer reads the cookie database in read-only mode, filters by the target
+host, expiry, and application path, and excludes partitioned cookies. For known
+platforms it imports only the session cookie names listed above. It decrypts
+cookies using macOS Keychain and validates the session before saving it with
+owner-only permissions. Cookie values are never printed. The encryption format
+follows [Chromium's macOS Keychain implementation](https://chromium.googlesource.com/chromium/src/+/main/components/os_crypt/async/browser/keychain_key_provider.mm).
+
+Log in to the target site in Chrome first. Allow `Chrome Safe Storage` access
+when macOS prompts. If cookies cannot be found or the database is locked, quit
+Chrome and retry so its cookies are flushed to disk. The import is a snapshot;
+rerun the command after the session expires. Chrome import currently supports
+macOS only and uses the system `sqlite3` and `security` commands. On other systems,
+or if Keychain access is denied, use the interactive cookie login below.
 
 For custom Overleaf Community Edition hosts, pass `--host`. Password login is
 usually the simplest path for local Docker and self-hosted deployments; pass
@@ -303,4 +351,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 The tarball contains `dist/`, the READMEs, and the license file. It can be
-installed with `npm install -g ./texleaf-sync-0.1.3.tgz`.
+installed with `npm install -g ./texleaf-sync-0.1.4.tgz`.

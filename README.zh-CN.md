@@ -8,17 +8,20 @@ English: [README.md](README.md)
 
 需要 Node.js 20 或更新版本。
 
+**自动搜索 Chrome 配置并查找、导入 Cookie 的功能仅支持 macOS。**
+Windows 和 Linux 请通过 `texleaf auth login` 手动填充 Cookie。
+
 通过 release URL 安装：
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.3/texleaf-sync-0.1.3.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.4/texleaf-sync-0.1.4.tgz
 texleaf --version
 ```
 
 或者安装已经下载到本地的 release tarball：
 
 ```bash
-npm install -g ./texleaf-sync-0.1.3.tgz
+npm install -g ./texleaf-sync-0.1.4.tgz
 texleaf --version
 ```
 
@@ -49,6 +52,13 @@ texleaf auth login
 - `2`：`overleaf`，`https://www.overleaf.com`。交互式登录会提示输入
   `overleaf_session2`。
 - `3`：自定义 Overleaf Community Edition host。
+- `4`：**From Chrome**，仅在 macOS 显示。自动检查 `cstcloud` 和 `overleaf`，
+  验证后保存各平台的有效会话。
+
+两个平台都有有效会话时，自动保存并结束。全部无法导入时，提示手动填充并返回此
+菜单。部分成功时，先保存成功的平台，列出未导入的平台，再提供“手动填充”
+（返回此菜单）和“结束”两个选项。macOS 可能提示授权访问钥匙串中的
+`Chrome Safe Storage`。多账号选择和排查方法见[认证](#认证)。
 
 已知平台的 session 会保存到 `~/.texleaf/sessions/`。自定义 host 的 session 默认
 保存到当前目录的 `.texleaf/session.json`，除非显式传 `--session-file`。
@@ -128,7 +138,7 @@ Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交�
 
 ## 当前状态
 
-当前版本：CLI `0.1.3`。
+当前版本：CLI `0.1.4`。
 
 主要命令：
 
@@ -151,6 +161,36 @@ Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交�
   `latex-session` 和 `overleaf.sid`。
 - `--platform overleaf` 使用 `https://www.overleaf.com`，需要
   `overleaf_session2`。
+
+macOS 上可以用 `--from-chrome` 自动读取 Google Chrome 已保存的 Cookie，无需
+在终端粘贴 Cookie 值：
+
+```bash
+texleaf auth login --from-chrome
+texleaf auth login --platform cstcloud --from-chrome
+texleaf auth login --platform overleaf --from-chrome --chrome-profile "Profile 1"
+```
+
+不指定 `--platform` 或 `--host` 时，`--from-chrome` 会直接开始与菜单相同的全平台
+检查。每个平台分别保存到 `~/.texleaf/sessions/`，支持 `--profile`，每轮检查最多
+请求一次钥匙串密码。Chrome 导入使用 `--session-file` 时，必须用 `--platform`
+或 `--host` 指定单个平台。在非交互环境中，全平台检查会保存成功的会话，并在有
+平台未导入时以错误状态退出。
+
+CLI 自动查找 Chrome 默认数据目录中的 `Default` 和 `Profile N`。如果多个配置
+都有匹配的 Cookie，用 `--chrome-profile "Default"`、`--chrome-profile "Profile 1"`
+或配置目录的绝对路径指定其中一个。它与用于命名 texleaf 会话的 `--profile` 不同。
+
+导入时以只读方式查询 Cookie 数据库，按目标域名、有效期和应用路径筛选，排除分区
+Cookie；已知平台只读取上面列出的会话 Cookie。随后通过 macOS 钥匙串解密，验证
+登录有效后，才以仅当前用户可读写的权限保存。Cookie 值不会输出到终端。加密格式
+依据 [Chromium 的 macOS 钥匙串实现](https://chromium.googlesource.com/chromium/src/+/main/components/os_crypt/async/browser/keychain_key_provider.mm)。
+
+请先在 Chrome 登录目标站点，并在系统提示时允许访问 `Chrome Safe Storage`。
+如果找不到 Cookie 或数据库被锁定，退出 Chrome 后重试，以便它将 Cookie 写入磁盘。
+导入的是当前会话快照，过期后需要重新运行导入命令。目前自动导入仅支持 macOS，
+使用系统自带的 `sqlite3` 和 `security` 命令；其他系统或无法授权钥匙串时，使用下方
+的交互式 Cookie 登录方式。
 
 自定义 Overleaf Community Edition host 使用 `--host`。本地 Docker 或自部署服务通常
 直接用用户名密码登录最省事；传 `--email` 后，CLI 会提示输入密码。
@@ -290,4 +330,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 tarball 会包含 `dist/`、README 和 LICENSE，可用
-`npm install -g ./texleaf-sync-0.1.3.tgz` 安装。
+`npm install -g ./texleaf-sync-0.1.4.tgz` 安装。

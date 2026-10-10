@@ -6,6 +6,8 @@ import { stdin as input, stdout as output } from "node:process";
 import { Command } from "commander";
 
 import { type AuthSession, checkSession, loadSession, loginWithPassword, saveSession, sessionFromCookieHeader } from "./auth.js";
+import { type AuthTarget, chooseAuthTarget } from "./auth-menu.js";
+import { loginWithChrome } from "./chrome.js";
 import { loadConfig, resolveRepoPath } from "./config.js";
 import { TexleafError } from "./errors.js";
 import { exists } from "./files.js";
@@ -30,7 +32,7 @@ const program = new Command();
 program
   .name("texleaf")
   .description("Git-safe Overleaf Community Edition sync CLI")
-  .version("0.1.3");
+  .version("0.1.4");
 
 program
   .command("clone")
@@ -105,6 +107,8 @@ auth
   .option("--email <email>", "Overleaf email for password login")
   .option("--password <password>", "Overleaf password")
   .option("--password-stdin", "read Overleaf password from stdin")
+  .option("--from-chrome", "import Chrome cookies (macOS; checks all platforms unless --platform/--host is set)")
+  .option("--chrome-profile <directory>", "Chrome profile name or path (requires --from-chrome)")
   .option("--insecure", "disable TLS verification")
   .action(async (options) => {
     await authLogin(options);
@@ -153,14 +157,35 @@ program.parseAsync(normalizeCloneArgs(process.argv)).catch((error: unknown) => {
 
 async function authLogin(options: Record<string, any>): Promise<void> {
   const passwordMode = Boolean(options.email);
+  if (options.fromChrome && (passwordMode || options.password || options.passwordStdin)) {
+    throw new TexleafError("Use --from-chrome separately from password login options.");
+  }
+  if (options.chromeProfile && !options.fromChrome) {
+    throw new TexleafError("Use --chrome-profile only with --from-chrome.");
+  }
   if (options.password && options.passwordStdin) throw new TexleafError("Use only one password input method.");
   if (!passwordMode && (options.password || options.passwordStdin)) {
     throw new TexleafError("Use --password or --password-stdin only with --email.");
   }
-  const interactive = !passwordMode;
-  const target = interactive ? await interactiveAuthTarget(options) : await resolveAuthTarget(options, true);
+  const useMenu = !passwordMode && !options.platform && !options.host;
+  const target = useMenu
+    ? await chooseAuthTarget(options, { question: promptOptional, write: console.log, interactive: Boolean(process.stdin.isTTY) })
+    : await resolveAuthTarget(options, true);
+  if (!target) return;
   const sslVerify = options.insecure ? false : !platformDisablesTls(target.platform, target.host);
   const profile = options.profile ?? "default";
+  if (options.fromChrome && !useMenu) {
+    info(`Reading Chrome session cookies for ${target.host}; macOS may ask for Chrome Safe Storage Keychain access.`);
+    const imported = await loginWithChrome({
+      host: target.host,
+      profile,
+      chromeProfile: options.chromeProfile,
+      sslVerify
+    });
+    await saveSession(target.sessionFile, imported.session);
+    console.log(`Imported Chrome profile ${JSON.stringify(imported.chromeProfile)}. Saved session to ${target.sessionFile}`);
+    return;
+  }
   const session = passwordMode
     ? await loginWithPassword({
         host: target.host,
@@ -209,34 +234,6 @@ async function resolveAuthTarget(options: Record<string, any>, allowDefaultKnown
     options.sessionFile ??
     (resolvedPlatform !== "custom" ? globalSessionFile(resolvedPlatform, profile) : path.resolve(".texleaf/session.json"));
   return { host, platform: resolvedPlatform, sessionFile };
-}
-
-async function interactiveAuthTarget(options: Record<string, any>): Promise<AuthTarget> {
-  if (options.platform || options.host) return await resolveAuthTarget(options, true);
-  const rl = readline.createInterface({ input, output });
-  try {
-    console.log("Choose Overleaf platform:");
-    console.log("  1. cstcloud (https://latex.cstcloud.cn)");
-    console.log("  2. overleaf (https://www.overleaf.com)");
-    console.log("  3. custom host");
-    const choice = (await rl.question("Platform [1]: ")).trim() || "1";
-    if (choice === "3") {
-      const host = normalizeHost(await rl.question("Overleaf host: "));
-      return {
-        host,
-        platform: hostPlatform(host),
-        sessionFile: options.sessionFile ?? path.resolve(".texleaf/session.json")
-      };
-    }
-    const platform = choice === "2" ? "overleaf" : "cstcloud";
-    return {
-      host: platformHost(platform),
-      platform,
-      sessionFile: options.sessionFile ?? globalSessionFile(platform, options.profile ?? "default")
-    };
-  } finally {
-    rl.close();
-  }
 }
 
 async function resolvePlatform(
@@ -373,10 +370,4 @@ function normalizeCloneArgs(argv: string[]): string[] {
     }
   }
   return argv;
-}
-
-interface AuthTarget {
-  host: string;
-  platform: PlatformName | "custom";
-  sessionFile: string;
 }
