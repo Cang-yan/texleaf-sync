@@ -103,7 +103,7 @@ export function hasDiffBetween(repo: string, base: string, head = "HEAD"): boole
 }
 
 export function mergeBranch(repo: string, branch: string, commit = false): void {
-  const args = ["merge", branch];
+  const args = ["merge", "--no-ff", branch];
   if (!commit) args.push("--no-commit");
   const result = runGit(repo, args, { check: false });
   if (result.code !== 0) {
@@ -127,6 +127,8 @@ export async function importSnapshotToBranch(args: {
   branch: string;
   patterns: string[];
   message: string;
+  additionalParent?: string;
+  preserveIgnoredFrom?: string;
 }): Promise<string> {
   const files = await collectTree(args.snapshotDir, args.patterns);
   const parent = branchExists(args.repo, args.branch) ? headCommit(args.repo, args.branch) : undefined;
@@ -138,9 +140,29 @@ export async function importSnapshotToBranch(args: {
       const objectId = await hashBlob(args.repo, content);
       runGit(args.repo, ["update-index", "--add", "--cacheinfo", "100644", objectId, projectPath], { env });
     }
+    const ignoredTracked = new Set(gitIgnoredTrackedFiles(args.repo));
+    const ignoredSources = args.preserveIgnoredFrom ? [args.preserveIgnoredFrom] : parent ? [parent] : [];
+    const preserved = new Map<string, { mode: string; objectId: string }>();
+    for (const source of ignoredSources) {
+      const entries = runGit(args.repo, ["ls-tree", "-r", "-z", source]).stdout.split("\0").filter(Boolean);
+      for (const entry of entries) {
+        const tab = entry.indexOf("\t");
+        if (tab < 0) continue;
+        const [mode, type, objectId] = entry.slice(0, tab).split(" ");
+        const projectPath = entry.slice(tab + 1);
+        if (type !== "blob" || !mode || !objectId || preserved.has(projectPath)) continue;
+        const ignoredByGit = ignoredTracked.has(projectPath)
+          || runGit(args.repo, ["check-ignore", "--no-index", "--quiet", "--", projectPath], { check: false }).code === 0;
+        if (isIgnored(projectPath, args.patterns) || ignoredByGit) preserved.set(projectPath, { mode, objectId });
+      }
+    }
+    for (const [projectPath, { mode, objectId }] of preserved) {
+      runGit(args.repo, ["update-index", "--add", "--cacheinfo", mode, objectId, projectPath], { env });
+    }
     const tree = runGit(args.repo, ["write-tree"], { env }).stdout.trim();
     const commitArgs = ["commit-tree", tree, "-m", args.message];
     if (parent) commitArgs.push("-p", parent);
+    if (args.additionalParent && args.additionalParent !== parent) commitArgs.push("-p", args.additionalParent);
     const commit = runGit(args.repo, commitArgs, { identity: true }).stdout.trim();
     const updateArgs = ["update-ref", `refs/heads/${args.branch}`, commit];
     if (parent) updateArgs.push(parent);

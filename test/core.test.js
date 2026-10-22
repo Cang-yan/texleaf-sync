@@ -154,6 +154,116 @@ test("freshness check ignores unpushed local commits", async () => {
   }
 });
 
+async function makeSyncFixture(t) {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-sync-push-history-"));
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const config = defaultConfig({
+    repoRoot: repo, host: "https://www.texpage.com", projectId: "project-key", ownerKey: "owner-key",
+    versionNo: "version-key", projectName: "sync-test", platform: "texpage", sessionFile: "session.json"
+  });
+  config.ignore.patterns.push("local-private.txt");
+  await writeConfig(repo, config);
+  ensureGitRepo(repo, config.git.mainBranch);
+  const remote = new Map([["paper.tex", "base paper\n"]]);
+  const snapshot = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-sync-push-snapshot-"));
+  t.after(() => fs.rm(snapshot, { recursive: true, force: true }));
+  await fs.writeFile(path.join(snapshot, "paper.tex"), remote.get("paper.tex"));
+  await importSnapshotToBranch({ repo, snapshotDir: snapshot, branch: config.git.remoteBranch, patterns: config.ignore.patterns, message: "initial remote" });
+  resetHard(repo, config.git.remoteBranch);
+  await ensureProjectGitignore(repo);
+  await fs.writeFile(path.join(repo, "local-private.txt"), "tracked and ignored by texleaf\n");
+  runGit(repo, ["add", ".gitignore", "local-private.txt"]);
+  runGit(repo, ["-c", "user.name=texleaf", "-c", "user.email=texleaf@example.invalid", "commit", "-m", "local ignored files"], { identity: true });
+  const writes = [];
+  const backend = {
+    async authenticate() {},
+    async projectName() { return "sync-test"; },
+    async downloadSnapshot(_id, dir) {
+      for (const [projectPath, content] of remote) {
+        const target = path.join(dir, projectPath);
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, content);
+      }
+    },
+    async createFolder(_id, projectPath) { writes.push(["folder", projectPath]); },
+    async writeTextFile(_id, projectPath, content) { writes.push(["text", projectPath]); remote.set(projectPath, content); },
+    async uploadBinaryFile(_id, projectPath, content) { writes.push(["binary", projectPath]); remote.set(projectPath, Buffer.from(content)); },
+    async deletePath(_id, projectPath) { writes.push(["delete", projectPath]); remote.delete(projectPath); },
+    async movePath(_id, oldPath, newPath) {
+      writes.push(["move", oldPath, newPath]);
+      if (!remote.has(oldPath)) throw new Error(`missing ${oldPath}`);
+      remote.set(newPath, remote.get(oldPath));
+      remote.delete(oldPath);
+    }
+  };
+  const engine = new SyncEngine(repo, () => backend);
+  const git = (args) => runGit(repo, args).stdout.trim();
+  const commit = (message) => {
+    runGit(repo, ["add", "-A", "--", "."]);
+    runGit(repo, ["-c", "user.name=texleaf", "-c", "user.email=texleaf@example.invalid", "commit", "-m", message], { identity: true });
+  };
+  return { repo, config, remote, writes, backend, engine, git, commit };
+}
+
+test("successive push snapshots anchor the verified HEAD and preserve ignored files", async (t) => {
+  const { repo, config, remote, writes, engine, git, commit } = await makeSyncFixture(t);
+  const steps = [
+    async () => { await fs.writeFile(path.join(repo, "added.tex"), "new file\n"); commit("add file"); },
+    async () => { await fs.writeFile(path.join(repo, "paper.tex"), "modified paper\n"); commit("modify existing file"); },
+    async () => { await fs.mkdir(path.join(repo, "nested"), { recursive: true }); await fs.rename(path.join(repo, "added.tex"), path.join(repo, "nested", "moved.tex")); commit("move file"); },
+    async () => {
+      await fs.rm(path.join(repo, "nested", "moved.tex"));
+      runGit(repo, ["rm", ".gitignore", "local-private.txt"]);
+      await fs.writeFile(path.join(repo, "paper.tex"), "modified after removing ignored files\n");
+      commit("delete fixture and tracked ignored files");
+    },
+    async () => { await fs.writeFile(path.join(repo, "paper.tex"), "final paper\n"); commit("continue after ignored-file removal"); }
+  ];
+  for (const [stepIndex, prepare] of steps.entries()) {
+    await prepare();
+    if (stepIndex === 3) {
+      const headBeforePull = git(["rev-parse", "HEAD"]);
+      await engine.pull();
+      assert.equal(git(["rev-parse", "HEAD"]), headBeforePull, "ignored-file deletion must not trigger a fake remote merge on pull");
+      assert.notEqual(runGit(repo, ["cat-file", "-e", "HEAD:.gitignore"], { check: false }).code, 0, "pull must not restore a locally deleted ignored file");
+    }
+    const localHead = git(["rev-parse", "HEAD"]);
+    const writesBefore = writes.length;
+    await engine.push();
+    assert.equal(git(["rev-parse", "HEAD"]), localHead, "a no-change freshness check must not move or merge the local branch");
+    assert.equal(git(["status", "--porcelain=v1", "--untracked-files=all", "--", ".", ":(exclude).texleaf"]), "", "push must leave the worktree clean");
+    assert.equal(mergeBase(repo, config.git.remoteBranch, "main"), localHead, "the verified local HEAD must be an ancestor of the remote snapshot");
+    assert.equal(hasDiffBetween(repo, localHead, config.git.remoteBranch), false, "verified snapshot tree should match the local project tree");
+    const localIgnoreExists = runGit(repo, ["cat-file", "-e", "HEAD:.gitignore"], { check: false }).code === 0;
+    const remoteIgnoreExists = runGit(repo, ["cat-file", "-e", `${config.git.remoteBranch}:.gitignore`], { check: false }).code === 0;
+    const remotePrivateExists = runGit(repo, ["cat-file", "-e", `${config.git.remoteBranch}:local-private.txt`], { check: false }).code === 0;
+    assert.equal(remoteIgnoreExists, localIgnoreExists, "the snapshot must preserve the local ignored-file set");
+    assert.equal(remotePrivateExists, localIgnoreExists, "custom ignored files must follow the verified local tree");
+    if (localIgnoreExists) assert.match(git(["show", `${config.git.remoteBranch}:.gitignore`]), /\.texleaf\//);
+    const plannedPaths = writes.slice(writesBefore).map((entry) => entry[1]);
+    assert.equal(plannedPaths.includes(".gitignore"), false);
+    assert.equal(plannedPaths.includes("local-private.txt"), false);
+  }
+  assert.deepEqual([...remote.keys()].sort(), ["paper.tex"]);
+  assert.equal(remote.get("paper.tex"), "final paper\n");
+});
+
+test("a real remote edit still triggers a conflict before any push write", async (t) => {
+  const { repo, remote, writes, engine, git, commit } = await makeSyncFixture(t);
+  await fs.writeFile(path.join(repo, "first.tex"), "first\n");
+  commit("initial push");
+  await engine.push();
+  await fs.writeFile(path.join(repo, "paper.tex"), "local concurrent edit\n");
+  commit("local edit");
+  remote.set("paper.tex", "remote concurrent edit\n");
+  const localHead = git(["rev-parse", "HEAD"]);
+  const writesBefore = writes.length;
+  await assert.rejects(engine.push(), /CONFLICT|merge/i);
+  assert.equal(git(["rev-parse", "HEAD"]), localHead, "conflicted freshness must keep the local HEAD unchanged");
+  assert.deepEqual(git(["diff", "--name-only", "--diff-filter=U"]).split(/\r?\n/).filter(Boolean), ["paper.tex"]);
+  assert.equal(writes.length, writesBefore, "remote changes must be reconciled before push operations start");
+});
+
 test("excludes gitignored tracked files from the push plan", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-dsstore-"));
   const git = (args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });

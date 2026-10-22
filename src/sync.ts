@@ -194,14 +194,17 @@ export class SyncEngine {
           printTreeDiff(diff);
           throw new TexleafError("Remote verification failed; sync metadata was not updated.");
         }
+        const verifiedLocalHead = headCommit(this.root);
         const remoteCommit = await importSnapshotToBranch({
           repo: this.root,
           snapshotDir: snapshot,
           branch: config.git.remoteBranch,
           patterns: config.ignore.patterns,
-          message: "overleaf: snapshot after push"
+          message: "overleaf: snapshot after push",
+          additionalParent: verifiedLocalHead,
+          preserveIgnoredFrom: verifiedLocalHead
         });
-        await this.writeMetadata(config.sync.lastSyncedFile, headCommit(this.root));
+        await this.writeMetadata(config.sync.lastSyncedFile, verifiedLocalHead);
         await this.writeMetadata(config.sync.lastRemoteSnapshotFile, remoteCommit);
         info("Push verification succeeded.");
       } finally {
