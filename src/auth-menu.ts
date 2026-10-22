@@ -60,7 +60,7 @@ export async function chooseAuthTarget(
 
   while (true) {
     if (!fromChrome) {
-      io.write("Choose Overleaf platform:");
+      io.write("Choose project platform:");
       knownPlatforms.forEach((platform, index) => io.write(`  ${index + 1}. ${platform} (${platformHost(platform)})`));
       io.write(`  ${customChoice}. custom host`);
       if (services.platform === "darwin") {
@@ -68,7 +68,7 @@ export async function chooseAuthTarget(
       }
       const choice = (await io.question("Platform [1]: ")).trim() || "1";
       if (choice === customChoice) {
-        const host = normalizeHost(await io.question("Overleaf host: "));
+        const host = normalizeHost(await io.question("Project service host: "));
         return { host, platform: hostPlatform(host), sessionFile: options.sessionFile ?? path.resolve(".texleaf/session.json") };
       }
       const platform = knownPlatforms.find((_, index) => choice === String(index + 1));

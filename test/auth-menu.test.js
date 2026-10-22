@@ -43,13 +43,13 @@ async function menuFixture(t, answers, validPlatforms) {
 }
 
 test("From Chrome saves every valid platform and finishes without another prompt", async (t) => {
-  const fixture = await menuFixture(t, ["4"], ["cstcloud", "overleaf"]);
+  const fixture = await menuFixture(t, ["5"], ["cstcloud", "overleaf", "texpage"]);
   const { io, services, imports, prompts, lines } = fixture;
   const target = await chooseAuthTarget({ profile: "research" }, io, services);
   assert.equal(target, undefined);
   assert.deepEqual(prompts, ["Platform [1]: "]);
-  assert.deepEqual(imports.map(({ platform, sslVerify }) => [platform, sslVerify]), [["cstcloud", false], ["overleaf", true]]);
-  for (const platform of ["cstcloud", "overleaf"]) {
+  assert.deepEqual(imports.map(({ platform, sslVerify }) => [platform, sslVerify]), [["cstcloud", false], ["overleaf", true], ["texpage", true]]);
+  for (const platform of ["cstcloud", "overleaf", "texpage"]) {
     const file = services.sessionFile(platform, "research");
     const session = await loadSession(file);
     assert.equal(session.profile, "research");
@@ -62,19 +62,19 @@ test("From Chrome saves every valid platform and finishes without another prompt
 });
 
 test("when neither platform has valid cookies it explains why and returns to the login menu", async (t) => {
-  const { io, services, lines, imports, prompts, directory } = await menuFixture(t, ["4", "2"], []);
+  const { io, services, lines, imports, prompts, directory } = await menuFixture(t, ["5", "2"], []);
   const target = await chooseAuthTarget({}, io, services);
   assert.equal(target.platform, "overleaf");
-  assert.equal(imports.length, 2);
-  assert.equal(lines.filter((line) => line === "Choose Overleaf platform:").length, 2);
-  assert.match(lines.join("\n"), /Manual login needed for: cstcloud, overleaf/);
+  assert.equal(imports.length, 3);
+  assert.equal(lines.filter((line) => line === "Choose project platform:").length, 2);
+  assert.match(lines.join("\n"), /Manual login needed for: cstcloud, overleaf, texpage/);
   assert.match(lines.join("\n"), /Please enter cookies manually; returning to the login menu/);
   assert.deepEqual(prompts, ["Platform [1]: ", "Platform [1]: "]);
   assert.deepEqual(await fs.readdir(directory), []);
 });
 
 test("partial imports save valid cookies and the manual option returns to platform selection", async (t) => {
-  const { io, services, lines, prompts } = await menuFixture(t, ["4", "1", "2"], ["cstcloud"]);
+  const { io, services, lines, prompts } = await menuFixture(t, ["5", "1", "2"], ["cstcloud"]);
   // An expired/missing browser cookie must not erase an existing CLI session.
   const previousFile = services.sessionFile("overleaf");
   const previous = '{"saved":"keep-this-session"}\n';
@@ -89,17 +89,17 @@ test("partial imports save valid cookies and the manual option returns to platfo
 });
 
 test("a failed first platform does not stop importing the next; Finish keeps the saved session", async (t) => {
-  const { io, services, lines, prompts, imports } = await menuFixture(t, ["4", "2"], ["overleaf"]);
+  const { io, services, lines, prompts, imports } = await menuFixture(t, ["5", "2"], ["overleaf"]);
   const target = await chooseAuthTarget({}, io, services);
   assert.equal(target, undefined);
-  assert.deepEqual(imports.map(({ platform }) => platform), ["cstcloud", "overleaf"]);
+  assert.deepEqual(imports.map(({ platform }) => platform), ["cstcloud", "overleaf", "texpage"]);
   assert.equal((await loadSession(services.sessionFile("overleaf"))).cookies[0].value, "overleaf-test-secret");
   assert.match(lines.join("\n"), /Manual login needed for: cstcloud/);
   assert.deepEqual(prompts, ["Platform [1]: ", "Next [1]: "]);
 });
 
 test("a save failure is reported as a failure and does not prevent saving another platform", async (t) => {
-  const { io, services, lines } = await menuFixture(t, ["4", "2"], ["cstcloud", "overleaf"]);
+  const { io, services, lines } = await menuFixture(t, ["5", "2"], ["cstcloud", "overleaf", "texpage"]);
   services.saveSession = async (file, session) => {
     if (file === services.sessionFile("cstcloud")) throw new Error("EACCES");
     await saveSession(file, session);
@@ -122,7 +122,7 @@ test("Chrome import is absent from non-Mac menus and explicit use is rejected wi
 });
 
 test("a single --session-file cannot be overwritten by a multi-platform import", async (t) => {
-  const { io, services, lines, imports } = await menuFixture(t, ["4", "2"], ["cstcloud", "overleaf"]);
+  const { io, services, lines, imports } = await menuFixture(t, ["5", "2"], ["cstcloud", "overleaf", "texpage"]);
   const options = { sessionFile: path.join(services.sessionFile("overleaf"), "custom.json") };
   const target = await chooseAuthTarget(options, io, services);
   assert.equal(target.sessionFile, options.sessionFile);
@@ -137,14 +137,21 @@ test("--from-chrome checks all platforms directly and noninteractive failures do
   await assert.rejects(chooseAuthTarget({ fromChrome: true, chromeProfile: "Default" }, io, services), /in a terminal to enter cookies manually/);
   assert.equal((await loadSession(services.sessionFile("cstcloud"))).cookies[0].value, "cstcloud-test-secret");
   assert.deepEqual(prompts, []);
-  assert.doesNotMatch(lines.join("\n"), /Choose Overleaf platform/);
+  assert.doesNotMatch(lines.join("\n"), /Choose project platform/);
 });
 
 test("manual choices and invalid input never start a Chrome scan", async (t) => {
-  const { io, services, imports, lines } = await menuFixture(t, ["invalid", "3", "https://overleaf.example.test"], []);
+  const { io, services, imports, lines } = await menuFixture(t, ["invalid", "4", "https://overleaf.example.test"], []);
   const target = await chooseAuthTarget({}, io, services);
   assert.equal(target.platform, "custom");
   assert.equal(target.host, "https://overleaf.example.test");
   assert.match(lines.join("\n"), /Choose one of the listed options/);
   assert.deepEqual(imports, []);
+});
+
+test("TexPage is available as a direct platform choice", async (t) => {
+  const { io, services } = await menuFixture(t, ["3"], []);
+  const target = await chooseAuthTarget({}, io, services);
+  assert.equal(target.platform, "texpage");
+  assert.equal(target.host, "https://www.texpage.com");
 });

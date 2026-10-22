@@ -93,7 +93,7 @@ test("creates custom-host config with project-local session", () => {
   assert.equal(config.backend.sslVerify, true);
 });
 
-test("parses Overleaf project URLs", () => {
+test("parses Overleaf and TexPage project URLs", () => {
   assert.deepEqual(parseProjectLocator("6a72a92ee92000863e4de8a1"), {
     projectId: "6a72a92ee92000863e4de8a1"
   });
@@ -111,6 +111,12 @@ test("parses Overleaf project URLs", () => {
     projectId: "697aee96f59bdd00852659f7",
     host: "https://cn.overleaf.com",
     platform: "overleaf"
+  });
+  assert.deepEqual(parseProjectLocator("https://www.texpage.com/project/user/project-key/version-no"), {
+    projectId: "project-key",
+    versionNo: "version-no",
+    host: "https://www.texpage.com",
+    platform: "texpage"
   });
 });
 

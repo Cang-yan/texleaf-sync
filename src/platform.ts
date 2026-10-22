@@ -15,6 +15,12 @@ export const platforms = {
     aliases: ["https://cn.overleaf.com"],
     cookieNames: ["overleaf_session2"],
     insecureTls: false
+  },
+  texpage: {
+    host: "https://www.texpage.com",
+    aliases: [],
+    cookieNames: ["SESSIONID"],
+    insecureTls: false
   }
 } as const;
 
@@ -71,6 +77,7 @@ export function safeFilePart(value: string): string {
 
 export interface ProjectLocator {
   projectId: string;
+  versionNo?: string;
   host?: string;
   platform?: PlatformName | "custom";
 }
@@ -84,7 +91,20 @@ export function parseProjectLocator(value: string): ProjectLocator {
   } catch {
     return { projectId: trimmed };
   }
-  const match = url.pathname.match(/^\/project\/([^/?#/]+)/);
+  if (hostPlatform(url.origin) === "texpage") {
+    const userProject = url.pathname.match(/^\/project\/user\/([^/]+)\/([^/?#]+)/);
+    const texpageMatch = userProject?.[1] ?? url.pathname.match(/^\/(?:project|editor)\/([^/?#]+)/)?.[1];
+    if (texpageMatch) {
+      const host = normalizeHost(url.origin);
+      return {
+        projectId: decodeURIComponent(texpageMatch),
+        versionNo: userProject ? decodeURIComponent(userProject[2]) : undefined,
+        host,
+        platform: "texpage"
+      };
+    }
+  }
+  const match = url.pathname.match(/^\/(?:project|editor)\/([^/?#/]+)/);
   if (!match) return { projectId: trimmed };
   const host = normalizeHost(url.origin);
   return {

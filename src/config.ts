@@ -15,6 +15,8 @@ export interface TexleafConfig {
   project: {
     host: string;
     projectId: string;
+    ownerKey?: string;
+    versionNo?: string;
     projectName: string;
     platform: PlatformName | "custom";
   };
@@ -83,6 +85,8 @@ export function defaultConfig(args: {
   repoRoot: string;
   host: string;
   projectId: string;
+  ownerKey?: string;
+  versionNo?: string;
   projectName: string;
   platform?: PlatformName | "custom";
   profile?: string;
@@ -95,6 +99,8 @@ export function defaultConfig(args: {
     project: {
       host,
       projectId: args.projectId,
+      ownerKey: args.ownerKey,
+      versionNo: args.versionNo,
       projectName: args.projectName,
       platform
     },
@@ -134,6 +140,8 @@ export async function loadConfig(repo: string): Promise<TexleafConfig> {
       repoRoot: repo,
       host: config.project.host,
       projectId: config.project.projectId,
+      ownerKey: config.project.ownerKey,
+      versionNo: config.project.versionNo,
       projectName: config.project.projectName ?? config.project.projectId,
       platform: config.project.platform ?? hostPlatform(config.project.host),
       profile: config.auth?.profile,
