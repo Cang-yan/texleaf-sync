@@ -26,6 +26,8 @@
     "prepublishOnly": "npm test"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1154.0",
+    "@smithy/node-http-handler": "^4.12.1",
     "commander": "^12.1.0",
     "undici": "^6.28.0",
     "ws": "^8.18.0",
