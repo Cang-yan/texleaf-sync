@@ -7,13 +7,14 @@ import test from "node:test";
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 
 import { cleanProjectTitle, textReplacementOperation } from "../dist/backend.js";
-import { loadSession, loginWithPassword, saveSession, sessionFromCookieHeader } from "../dist/auth.js";
-import { defaultConfig } from "../dist/config.js";
+import { checkSession, loadSession, loginWithPassword, saveSession, sessionFromCookieHeader } from "../dist/auth.js";
+import { defaultConfig, ensureProjectGitignore, writeConfig } from "../dist/config.js";
 import { buildPushPlan } from "../dist/diff.js";
 import { exists, removeDirectoriesByPrefix } from "../dist/files.js";
-import { gitIgnoredTrackedFiles, hasDiffBetween, mergeBase } from "../dist/git.js";
+import { ensureGitRepo, gitIgnoredTrackedFiles, hasDiffBetween, headCommit, importSnapshotToBranch, mergeBase, resetHard, runGit } from "../dist/git.js";
 import { globalSessionFile, hostPlatform, parseProjectLocator } from "../dist/platform.js";
 import { isIgnored, normalizeProjectPath } from "../dist/snapshot.js";
+import { SyncEngine } from "../dist/sync.js";
 
 test("cleans Overleaf and cstcloud project titles", () => {
   assert.equal(cleanProjectTitle("Paper - Overleaf, Online LaTeX Editor"), "Paper");
@@ -190,6 +191,24 @@ test("loads official Overleaf sessions across host aliases", async () => {
   );
   const session = await loadSession(file, "https://cn.overleaf.com");
   assert.equal(session.host, "https://www.overleaf.com");
+});
+
+test("checks TexPage sessions from the project total status", async () => {
+  const previousDispatcher = getGlobalDispatcher();
+  const mockAgent = new MockAgent();
+  mockAgent.disableNetConnect();
+  setGlobalDispatcher(mockAgent);
+  const pool = mockAgent.get("https://www.texpage.com");
+  pool.intercept({ method: "GET", path: /^\/api\/project\/total\?t=\d+$/ }).reply(200, { status: { code: 1 } });
+  pool.intercept({ method: "GET", path: /^\/api\/project\/total\?t=\d+$/ }).reply(200, { status: { code: 0 } });
+  const session = sessionFromCookieHeader({ host: "https://www.texpage.com", profile: "default", cookieHeader: "SESSIONID=secret", sslVerify: true });
+  try {
+    assert.deepEqual(await checkSession({ host: session.host, session }), { loggedIn: true });
+    assert.deepEqual(await checkSession({ host: session.host, session }), { loggedIn: false, error: "TexPage session was rejected." });
+  } finally {
+    setGlobalDispatcher(previousDispatcher);
+    await mockAgent.close();
+  }
 });
 
 test("logs in to custom host with email and password", async () => {

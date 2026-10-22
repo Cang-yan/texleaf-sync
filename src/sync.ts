@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { OverleafBackend } from "./backend.js";
+import { createProjectBackend, type ProjectBackend } from "./project-backend.js";
 import { type TexleafConfig, defaultConfig, ensureProjectGitignore, loadConfig, resolveRepoPath, writeConfig } from "./config.js";
 import { buildPushPlan, formatPushPlan, type PushOperation } from "./diff.js";
 import { ConfigError, DirtyWorktreeError, TexleafError } from "./errors.js";
@@ -30,6 +30,8 @@ export interface CloneOptions {
   host?: string;
   platform?: PlatformName | "custom";
   projectId: string;
+  ownerKey?: string;
+  versionNo?: string;
   projectName?: string;
   directory?: string;
   profile: string;
@@ -38,8 +40,10 @@ export interface CloneOptions {
   insecure?: boolean;
 }
 
+type ProjectBackendFactory = (repo: string, config: TexleafConfig) => ProjectBackend;
+
 export class SyncEngine {
-  constructor(private readonly root: string) {}
+  constructor(private readonly root: string, private readonly backendFactory: ProjectBackendFactory = createProjectBackend) {}
 
   async clone(options: CloneOptions): Promise<string> {
     const host = normalizeHost(options.host ?? (options.platform && options.platform !== "custom" ? platformHost(options.platform) : ""));
@@ -51,15 +55,20 @@ export class SyncEngine {
       repoRoot: this.root,
       host,
       projectId: options.projectId,
+      ownerKey: options.ownerKey,
+      versionNo: options.versionNo,
       projectName: options.projectName ?? options.projectId,
       platform,
       profile: options.profile,
       sessionFile,
       sslVerify
     });
-    const probe = new OverleafBackend(this.root, probeConfig);
+    const probe = this.backendFactory(this.root, probeConfig);
     await probe.authenticate();
-    const remoteName = options.projectName ?? (await probe.projectName(options.projectId)) ?? options.projectId;
+    const remoteIdentity = probe.projectIdentity ? await probe.projectIdentity(options.projectId) : undefined;
+    const remoteName = options.projectName ?? remoteIdentity?.projectName ?? (await probe.projectName(options.projectId)) ?? options.projectId;
+    const ownerKey = options.ownerKey ?? remoteIdentity?.ownerKey;
+    const versionNo = options.versionNo ?? remoteIdentity?.versionNo;
     const target = path.resolve(this.root, options.directory ?? safeDirectoryName(remoteName));
     if ((await exists(target)) && !(await isDirectory(target))) {
       throw new ConfigError(`Clone destination exists and is not a directory: ${target}`);
@@ -72,6 +81,8 @@ export class SyncEngine {
       repoRoot: target,
       host,
       projectId: options.projectId,
+      ownerKey,
+      versionNo,
       projectName: remoteName,
       platform,
       profile: options.profile,
@@ -84,7 +95,7 @@ export class SyncEngine {
 
   async pull(): Promise<void> {
     const config = await loadConfig(this.root);
-    const backend = new OverleafBackend(this.root, config);
+    const backend = this.backendFactory(this.root, config);
     await withLock(resolveRepoPath(this.root, config.sync.lockFile), async () => {
       requireCleanWorktree(this.root);
       await backend.authenticate();
@@ -134,7 +145,7 @@ export class SyncEngine {
 
   async verify(allowDiff = false): Promise<void> {
     const config = await loadConfig(this.root);
-    const backend = new OverleafBackend(this.root, config);
+    const backend = this.backendFactory(this.root, config);
     await withLock(resolveRepoPath(this.root, config.sync.lockFile), async () => {
       await backend.authenticate();
       const snapshot = await this.downloadSnapshot(config, backend);
@@ -154,7 +165,7 @@ export class SyncEngine {
 
   async push(dryRun = false): Promise<void> {
     const config = await loadConfig(this.root);
-    const backend = new OverleafBackend(this.root, config);
+    const backend = this.backendFactory(this.root, config);
     await withLock(resolveRepoPath(this.root, config.sync.lockFile), async () => {
       requireNoConflicts(this.root);
       requireCleanWorktree(this.root);
@@ -200,7 +211,7 @@ export class SyncEngine {
   }
 
   private async initInto(repo: string, config: TexleafConfig): Promise<void> {
-    const backend = new OverleafBackend(repo, config);
+    const backend = this.backendFactory(repo, config);
     await backend.authenticate();
     await writeConfig(repo, config);
     ensureGitRepo(repo, config.git.mainBranch);
@@ -228,7 +239,7 @@ export class SyncEngine {
     info(`Initialized texleaf metadata at ${path.join(repo, ".texleaf", "config.json")}.`);
   }
 
-  private async importLatestSnapshot(config: TexleafConfig, backend: OverleafBackend, message: string): Promise<string> {
+  private async importLatestSnapshot(config: TexleafConfig, backend: ProjectBackend, message: string): Promise<string> {
     const snapshot = await this.downloadSnapshot(config, backend);
     try {
       return await importSnapshotToBranch({
@@ -243,7 +254,7 @@ export class SyncEngine {
     }
   }
 
-  private async downloadSnapshot(config: TexleafConfig, backend: OverleafBackend, repo = this.root): Promise<string> {
+  private async downloadSnapshot(config: TexleafConfig, backend: ProjectBackend, repo = this.root): Promise<string> {
     const snapshotRoot = resolveRepoPath(repo, config.sync.snapshotDir);
     await ensureDir(snapshotRoot);
     await removeDirectoriesByPrefix(snapshotRoot, "snapshot-");
@@ -258,7 +269,7 @@ export class SyncEngine {
     return local;
   }
 
-  private async applyPushPlan(config: TexleafConfig, backend: OverleafBackend, plan: PushOperation[]): Promise<void> {
+  private async applyPushPlan(config: TexleafConfig, backend: ProjectBackend, plan: PushOperation[]): Promise<void> {
     let index = 0;
     for (const op of plan) {
       index++;
@@ -269,14 +280,14 @@ export class SyncEngine {
         await backend.deletePath(config.project.projectId, op.path);
       } else if (op.status.startsWith("R") && op.oldPath) {
         await backend.movePath(config.project.projectId, op.oldPath, op.path);
-        await this.writeFile(config, backend, op);
+        if (op.status !== "R100") await this.writeFile(config, backend, op);
       } else {
         await this.writeFile(config, backend, op);
       }
     }
   }
 
-  private async writeFile(config: TexleafConfig, backend: OverleafBackend, op: PushOperation): Promise<void> {
+  private async writeFile(config: TexleafConfig, backend: ProjectBackend, op: PushOperation): Promise<void> {
     const content = await fs.readFile(path.join(this.root, op.path));
     if (op.isText) await backend.writeTextFile(config.project.projectId, op.path, content.toString("utf8"));
     else await backend.uploadBinaryFile(config.project.projectId, op.path, content);

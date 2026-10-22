@@ -87,6 +87,21 @@ export async function checkSession(args: {
   timeoutMs?: number;
 }): Promise<AuthStatus> {
   try {
+    if (hostPlatform(args.host) === "texpage") {
+      const response = await fetchWithTimeout(`${normalizeHost(args.host)}/api/project/total?t=${Date.now()}`, {
+        headers: {
+          Accept: "application/json",
+          Cookie: cookieHeader(args.session)
+        },
+        redirect: "manual",
+        timeoutMs: args.timeoutMs ?? 16_000,
+        sslVerify: args.session.sslVerify
+      });
+      if (response.status !== 200) return { loggedIn: false, error: `HTTP ${response.status}` };
+      const data = (await response.json()) as { status?: { code?: unknown } };
+      if (data.status?.code !== 1) return { loggedIn: false, error: "TexPage session was rejected." };
+      return { loggedIn: true };
+    }
     const response = await fetchWithTimeout(`${normalizeHost(args.host)}/user/personal_info`, {
       headers: {
         Accept: "application/json",

@@ -8,7 +8,7 @@ import test from "node:test";
 test("clone help uses positional project locator", () => {
   const output = execFileSync(process.execPath, ["dist/cli.js", "clone", "--help"], { encoding: "utf8" });
   assert.match(output, /Usage: texleaf clone \[options\] <project> \[directory\]/);
-  assert.match(output, /Overleaf project id or project URL/);
+  assert.match(output, /project id or project URL/);
   assert.doesNotMatch(output, /--project-id/);
 });
 
@@ -22,6 +22,13 @@ test("Chrome login options reject conflicting inputs before any credential acces
     assert.equal(result.status, 1);
     assert.match(result.stderr, message);
   }
+});
+
+test("TexPage password login is rejected before prompting or reading credentials", () => {
+  const result = spawnSync(process.execPath, ["dist/cli.js", "auth", "login", "--platform", "texpage", "--email", "person@example.invalid", "--password-stdin"], { encoding: "utf8", input: "" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /TexPage uses Cookie sessions/);
+  assert.doesNotMatch(result.stderr, /standard input|No password/);
 });
 
 test("failed Chrome imports preserve an existing saved session", async (t) => {

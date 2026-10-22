@@ -31,20 +31,20 @@ const program = new Command();
 
 program
   .name("texleaf")
-  .description("Git-safe Overleaf Community Edition sync CLI")
+  .description("Git-safe Overleaf and TexPage project sync CLI")
   .version("0.1.4");
 
 program
   .command("clone")
-  .description("download an Overleaf project into a new local Git repository")
-  .option("--platform <name>", "known platform: cstcloud or overleaf")
-  .option("--host <url>", "custom Overleaf host")
+  .description("download a remote project into a new local Git repository")
+  .option("--platform <name>", "known platform: cstcloud, overleaf, or texpage")
+  .option("--host <url>", "custom project host")
   .option("--project-name <name>", "override local project name")
   .option("--profile <name>", "auth profile", "default")
   .option("--session-file <file>", "session JSON file")
   .option("--force", "allow cloning into a non-empty directory")
   .option("--insecure", "disable TLS verification")
-  .argument("<project>", "Overleaf project id or project URL")
+  .argument("<project>", "project id or project URL")
   .argument("[directory]", "destination directory")
   .action(async (project: string, directory: string | undefined, options) => {
     const locator = parseProjectLocator(project);
@@ -57,6 +57,7 @@ program
       host,
       platform,
       projectId: locator.projectId,
+      versionNo: locator.versionNo,
       projectName: options.projectName,
       directory,
       profile: options.profile,
@@ -64,7 +65,7 @@ program
       force: Boolean(options.force),
       insecure: Boolean(options.insecure)
     });
-    console.log(`Cloned Overleaf project to ${target}`);
+    console.log(`Cloned project to ${target}`);
   });
 
 program.command("pull").description("import latest remote snapshot through Git").action(async () => {
@@ -73,7 +74,7 @@ program.command("pull").description("import latest remote snapshot through Git")
 
 program
   .command("push")
-  .description("apply committed local changes to Overleaf")
+  .description("apply committed local changes to the remote project")
   .option("--dry-run", "print the push plan without writing")
   .action(async (options) => {
     await new SyncEngine(process.cwd()).push(Boolean(options.dryRun));
@@ -95,18 +96,18 @@ program
     await new SyncEngine(process.cwd()).verify(Boolean(options.allowDiff));
   });
 
-const auth = program.command("auth").description("manage saved Overleaf sessions");
+const auth = program.command("auth").description("manage saved project service sessions");
 
 auth
   .command("login")
-  .description("save a reusable Overleaf session")
-  .option("--platform <name>", "known platform: cstcloud or overleaf")
-  .option("--host <url>", "custom Overleaf host")
+  .description("save a reusable project service session")
+  .option("--platform <name>", "known platform: cstcloud, overleaf, or texpage")
+  .option("--host <url>", "custom project host")
   .option("--profile <name>", "auth profile", "default")
   .option("--session-file <file>", "session JSON file")
-  .option("--email <email>", "Overleaf email for password login")
-  .option("--password <password>", "Overleaf password")
-  .option("--password-stdin", "read Overleaf password from stdin")
+  .option("--email <email>", "email for password login")
+  .option("--password <password>", "account password")
+  .option("--password-stdin", "read account password from stdin")
   .option("--from-chrome", "import Chrome cookies (macOS; checks all platforms unless --platform/--host is set)")
   .option("--chrome-profile <directory>", "Chrome profile name or path (requires --from-chrome)")
   .option("--insecure", "disable TLS verification")
@@ -117,8 +118,8 @@ auth
 auth
   .command("status")
   .description("check a saved session")
-  .option("--platform <name>", "known platform: cstcloud or overleaf")
-  .option("--host <url>", "custom Overleaf host")
+  .option("--platform <name>", "known platform: cstcloud, overleaf, or texpage")
+  .option("--host <url>", "custom project host")
   .option("--profile <name>", "auth profile", "default")
   .option("--session-file <file>", "session JSON file")
   .option("--insecure", "disable TLS verification")
@@ -134,8 +135,8 @@ auth
 auth
   .command("logout")
   .description("delete a saved session")
-  .option("--platform <name>", "known platform: cstcloud or overleaf")
-  .option("--host <url>", "custom Overleaf host")
+  .option("--platform <name>", "known platform: cstcloud, overleaf, or texpage")
+  .option("--host <url>", "custom project host")
   .option("--profile <name>", "auth profile", "default")
   .option("--session-file <file>", "session JSON file")
   .action(async (options) => {
@@ -172,6 +173,9 @@ async function authLogin(options: Record<string, any>): Promise<void> {
     ? await chooseAuthTarget(options, { question: promptOptional, write: console.log, interactive: Boolean(process.stdin.isTTY) })
     : await resolveAuthTarget(options, true);
   if (!target) return;
+  if (target.platform === "texpage" && passwordMode) {
+    throw new TexleafError("TexPage uses Cookie sessions; use --from-chrome or log in with the TexPage SESSIONID cookie.");
+  }
   const sslVerify = options.insecure ? false : !platformDisablesTls(target.platform, target.host);
   const profile = options.profile ?? "default";
   if (options.fromChrome && !useMenu) {

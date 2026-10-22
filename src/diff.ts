@@ -45,9 +45,9 @@ export async function buildPushPlan(repo: string, base: string, patterns: string
 }
 
 export function formatPushPlan(operations: PushOperation[]): string {
-  if (!operations.length) return "Planned Overleaf operations:\n  (none)";
+  if (!operations.length) return "Planned project operations:\n  (none)";
   return [
-    "Planned Overleaf operations:",
+    "Planned project operations:",
     ...operations.map((op) => (op.oldPath ? `  R ${op.oldPath} -> ${op.path}` : `  ${op.status[0]} ${op.path}`))
   ].join("\n");
 }
