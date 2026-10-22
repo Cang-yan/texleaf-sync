@@ -51,12 +51,14 @@ The prompt offers:
   and `overleaf.sid`.
 - `2` for `overleaf`, `https://www.overleaf.com`. The interactive login asks for
   `overleaf_session2`.
-- `3` for a custom Overleaf Community Edition host.
-- `4` for **From Chrome** on macOS. This checks both `cstcloud` and `overleaf`
+- `3` for `texpage`, `https://www.texpage.com`. Chrome import uses the
+  `SESSIONID` cookie.
+- `4` for a custom Overleaf Community Edition host.
+- `5` for **From Chrome** on macOS. This checks `cstcloud`, `overleaf`, and `texpage`
   and saves each valid session automatically.
 
-If Chrome has valid sessions for both platforms, login finishes immediately.
-If neither can be imported, the CLI asks you to enter cookies manually and
+If Chrome has valid sessions for all supported platforms, login finishes immediately.
+If none can be imported, the CLI asks you to enter cookies manually and
 returns to this menu. If only some are imported, it lists the missing platforms
 and offers **Enter cookies manually** (return to this menu) or **Finish**.
 macOS may ask for access to the `Chrome Safe Storage` Keychain item. See
@@ -66,7 +68,7 @@ Known-platform sessions are saved under `~/.texleaf/sessions/`. Custom-host
 sessions are saved to `.texleaf/session.json` in the current directory unless
 `--session-file` is provided.
 
-If you already know the target, `--platform cstcloud`, `--platform overleaf`,
+If you already know the target, `--platform cstcloud`, `--platform overleaf`, `--platform texpage`,
 or `--host http://localhost` can skip the selection prompt.
 
 ### 3. Clone an Overleaf project
@@ -92,7 +94,12 @@ recognized:
 texleaf clone https://latex.cstcloud.cn/project/6a72a92ee92000863e4de8a1
 texleaf clone https://www.overleaf.com/project/697aee96f59bdd00852659f7
 texleaf clone https://cn.overleaf.com/project/697aee96f59bdd00852659f7
+texleaf clone https://www.texpage.com/project/user/PROJECT_KEY/VERSION_NO
 ```
+
+TexPage URLs include both the project key and selected version. The clone pins
+that version in `.texleaf/config.json`; TexPage project lookup by a raw key uses
+the selected version returned by the account's project list.
 
 The raw project id form still works when you provide the target platform or
 host yourself:
@@ -163,6 +170,25 @@ Important commands:
   the result.
 - `texleaf push --dry-run` prints the write plan without changing Overleaf.
 
+TexPage supports project snapshots, text updates, and file synchronization for
+new, replaced, moved, renamed, and deleted text or binary files. Parent folders
+are created as needed. This CLI synchronizes regular files and paths; it does
+not preserve empty directories, symlinks, or filesystem permissions. TexPage
+binary uploads use short-lived object-storage credentials; the TexPage session
+cookie is not sent to storage.
+
+Do not edit the same TexPage project in the browser while a CLI push is running.
+Both clients use the same account operation sequence, so concurrent edits are
+not supported. The server must return a complete CRDT history for text writes;
+the CLI rejects partial history before sending operations. Moving or renaming
+the configured main file does not update TexPage project settings; select the
+main file again in the TexPage UI if compilation no longer uses the intended
+file. A failed remote operation can leave earlier operations from the same push
+applied; pull or clone a fresh snapshot before retrying.
+After a verified push, the remote snapshot history records the exact local
+commit that was uploaded, so later pushes do not treat those writes as new remote
+changes.
+
 ## Authentication
 
 Known platforms store global sessions under `~/.texleaf/sessions/`:
@@ -171,6 +197,7 @@ Known platforms store global sessions under `~/.texleaf/sessions/`:
   `latex-session` plus `overleaf.sid`.
 - `--platform overleaf` uses `https://www.overleaf.com` and expects
   `overleaf_session2`.
+- `--platform texpage` uses `https://www.texpage.com` and expects `SESSIONID`.
 
 On macOS, `--from-chrome` imports saved cookies from Google Chrome without
 copying their values into the terminal:
@@ -179,6 +206,7 @@ copying their values into the terminal:
 texleaf auth login --from-chrome
 texleaf auth login --platform cstcloud --from-chrome
 texleaf auth login --platform overleaf --from-chrome --chrome-profile "Profile 1"
+texleaf auth login --platform texpage --from-chrome
 ```
 
 Without `--platform` or `--host`, `--from-chrome` starts the same all-platform

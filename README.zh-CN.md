@@ -51,11 +51,12 @@ texleaf auth login
   `overleaf.sid`。
 - `2`：`overleaf`，`https://www.overleaf.com`。交互式登录会提示输入
   `overleaf_session2`。
-- `3`：自定义 Overleaf Community Edition host。
-- `4`：**From Chrome**，仅在 macOS 显示。自动检查 `cstcloud` 和 `overleaf`，
+- `3`：`texpage`，`https://www.texpage.com`。从 Chrome 导入时使用 `SESSIONID` Cookie。
+- `4`：自定义 Overleaf Community Edition host。
+- `5`：**From Chrome**，仅在 macOS 显示。自动检查 `cstcloud`、`overleaf` 和 `texpage`，
   验证后保存各平台的有效会话。
 
-两个平台都有有效会话时，自动保存并结束。全部无法导入时，提示手动填充并返回此
+所有支持的平台都有有效会话时，自动保存并结束。全部无法导入时，提示手动填充并返回此
 菜单。部分成功时，先保存成功的平台，列出未导入的平台，再提供“手动填充”
 （返回此菜单）和“结束”两个选项。macOS 可能提示授权访问钥匙串中的
 `Chrome Safe Storage`。多账号选择和排查方法见[认证](#认证)。
@@ -63,7 +64,7 @@ texleaf auth login
 已知平台的 session 会保存到 `~/.texleaf/sessions/`。自定义 host 的 session 默认
 保存到当前目录的 `.texleaf/session.json`，除非显式传 `--session-file`。
 
-如果已经知道目标，也可以用 `--platform cstcloud`、`--platform overleaf` 或
+如果已经知道目标，也可以用 `--platform cstcloud`、`--platform overleaf`、`--platform texpage` 或
 `--host http://localhost` 跳过选择提示。
 
 ### 3. Clone 一个 Overleaf 项目
@@ -88,7 +89,11 @@ cd PROJECT_NAME_FROM_OVERLEAF
 texleaf clone https://latex.cstcloud.cn/project/6a72a92ee92000863e4de8a1
 texleaf clone https://www.overleaf.com/project/697aee96f59bdd00852659f7
 texleaf clone https://cn.overleaf.com/project/697aee96f59bdd00852659f7
+texleaf clone https://www.texpage.com/project/user/PROJECT_KEY/VERSION_NO
 ```
+
+TexPage 项目 URL 同时包含 project key 和当前版本。Clone 会把该版本固定写入
+`.texleaf/config.json`；只传 project key 时会从账号项目列表读取当前选中版本。
 
 如果只传 project id，也仍然可以用，但需要自己提供目标平台或 host：
 
@@ -153,6 +158,17 @@ Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交�
 - `texleaf push`：把已提交的本地改动写回 Overleaf，并重新验证。
 - `texleaf push --dry-run`：只打印写入计划，不修改 Overleaf。
 
+TexPage 支持项目快照、文本更新，以及新增、替换、移动、重命名和删除文本或二进制文件；
+需要时会自动创建父目录。当前 CLI 只同步普通文件和路径，不保留空目录、符号链接或文件权限。
+二进制上传使用短期对象存储凭据，不会把 TexPage 会话 Cookie 发送给存储服务。
+
+CLI push 运行期间不要同时在网页端编辑同一 TexPage 项目。两端共用账号操作序号，当前不支持并发编辑。
+文本写入要求服务端返回完整 CRDT 历史；若历史不完整，CLI 会在发送操作前拒绝写入。
+移动或重命名项目配置的主文件不会同步 TexPage 项目设置；如果编译入口因此不正确，
+请在 TexPage 网页端重新选择主文件。一次推送中的远端操作若失败，之前成功的操作可能已经生效；
+重试前先拉取或重新 Clone 最新快照。
+推送通过验证后，远端快照历史会记录本次上传对应的本地提交，后续 push 不会把已推送的改动再次当作远端新变化。
+
 ## 认证
 
 已知平台的 session 会全局保存到 `~/.texleaf/sessions/`：
@@ -161,6 +177,7 @@ Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交�
   `latex-session` 和 `overleaf.sid`。
 - `--platform overleaf` 使用 `https://www.overleaf.com`，需要
   `overleaf_session2`。
+- `--platform texpage` 使用 `https://www.texpage.com`，需要 `SESSIONID`。
 
 macOS 上可以用 `--from-chrome` 自动读取 Google Chrome 已保存的 Cookie，无需
 在终端粘贴 Cookie 值：
@@ -169,6 +186,7 @@ macOS 上可以用 `--from-chrome` 自动读取 Google Chrome 已保存的 Cooki
 texleaf auth login --from-chrome
 texleaf auth login --platform cstcloud --from-chrome
 texleaf auth login --platform overleaf --from-chrome --chrome-profile "Profile 1"
+texleaf auth login --platform texpage --from-chrome
 ```
 
 不指定 `--platform` 或 `--host` 时，`--from-chrome` 会直接开始与菜单相同的全平台
