@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 
 import { gitIgnoredTrackedFiles, nameStatusDiff } from "./git.js";
+import { warn } from "./log.js";
 import { isIgnored } from "./snapshot.js";
 
 export interface PushOperation {
@@ -33,7 +35,10 @@ export async function buildPushPlan(repo: string, base: string, patterns: string
     const projectPath = status.startsWith("R") ? row[2] : row[1];
     if (!projectPath || isIgnored(projectPath, patterns) || (oldPath && isIgnored(oldPath, patterns))) continue;
     if (gitIgnored.has(projectPath) || (oldPath && gitIgnored.has(oldPath))) continue;
-    const content = status === "D" ? undefined : await fs.readFile(`${repo}/${projectPath}`).catch(() => Buffer.alloc(0));
+    const content = status === "D" ? undefined : await fs.readFile(path.join(repo, projectPath)).catch(() => undefined);
+    if (content === undefined && status !== "D") {
+      warn(`Could not read ${projectPath}; treating it as text for the push plan.`);
+    }
     operations.push({
       status,
       path: projectPath,
@@ -53,7 +58,7 @@ export function formatPushPlan(operations: PushOperation[]): string {
 }
 
 function isTextPath(projectPath: string, content?: Buffer): boolean {
-  const extension = projectPath.slice(projectPath.lastIndexOf(".")).toLowerCase();
+  const extension = path.posix.extname(projectPath).toLowerCase();
   if (textExtensions.has(extension)) return true;
   if (!content) return true;
   if (content.includes(0)) return false;

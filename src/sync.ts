@@ -1,8 +1,15 @@
-import fs from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 import { createProjectBackend, type ProjectBackend } from "./project-backend.js";
-import { type TexleafConfig, defaultConfig, ensureProjectGitignore, loadConfig, resolveRepoPath, writeConfig } from "./config.js";
+import {
+  type TexleafConfig,
+  defaultConfig,
+  ensureProjectGitignore,
+  loadConfig,
+  resolveRepoPath,
+  writeConfig
+} from "./config.js";
 import { buildPushPlan, formatPushPlan, type PushOperation } from "./diff.js";
 import { ConfigError, DirtyWorktreeError, TexleafError } from "./errors.js";
 import {
@@ -21,9 +28,23 @@ import {
   runGit,
   worktreeChanges
 } from "./git.js";
-import { ensureDir, exists, isDirectory, isEmptyDirectory, removeDirectoriesByPrefix, writeJsonAtomic } from "./files.js";
+import {
+  ensureDir,
+  exists,
+  isDirectory,
+  isEmptyDirectory,
+  removeDirectoriesByPrefix,
+  writeJsonAtomic
+} from "./files.js";
 import { info } from "./log.js";
-import { type PlatformName, globalSessionFile, hostPlatform, normalizeHost, platformDisablesTls, platformHost } from "./platform.js";
+import {
+  type PlatformName,
+  globalSessionFile,
+  hostPlatform,
+  normalizeHost,
+  platformDisablesTls,
+  platformHost
+} from "./platform.js";
 import { collectTreeHashes, compareTrees } from "./snapshot.js";
 
 export interface CloneOptions {
@@ -43,13 +64,19 @@ export interface CloneOptions {
 type ProjectBackendFactory = (repo: string, config: TexleafConfig) => ProjectBackend;
 
 export class SyncEngine {
-  constructor(private readonly root: string, private readonly backendFactory: ProjectBackendFactory = createProjectBackend) {}
+  constructor(
+    private readonly root: string,
+    private readonly backendFactory: ProjectBackendFactory = createProjectBackend
+  ) {}
 
   async clone(options: CloneOptions): Promise<string> {
-    const host = normalizeHost(options.host ?? (options.platform && options.platform !== "custom" ? platformHost(options.platform) : ""));
+    const host = normalizeHost(
+      options.host ?? (options.platform && options.platform !== "custom" ? platformHost(options.platform) : "")
+    );
     const platform = options.platform ?? hostPlatform(host);
     const sessionFile =
-      options.sessionFile ?? (platform !== "custom" ? globalSessionFile(platform, options.profile) : ".texleaf/session.json");
+      options.sessionFile ??
+      (platform !== "custom" ? globalSessionFile(platform, options.profile) : ".texleaf/session.json");
     const sslVerify = options.insecure ? false : !platformDisablesTls(platform, host);
     const probeConfig = defaultConfig({
       repoRoot: this.root,
@@ -66,7 +93,11 @@ export class SyncEngine {
     const probe = this.backendFactory(this.root, probeConfig);
     await probe.authenticate();
     const remoteIdentity = probe.projectIdentity ? await probe.projectIdentity(options.projectId) : undefined;
-    const remoteName = options.projectName ?? remoteIdentity?.projectName ?? (await probe.projectName(options.projectId)) ?? options.projectId;
+    const remoteName =
+      options.projectName ??
+      remoteIdentity?.projectName ??
+      (await probe.projectName(options.projectId)) ??
+      options.projectId;
     const ownerKey = options.ownerKey ?? remoteIdentity?.ownerKey;
     const versionNo = options.versionNo ?? remoteIdentity?.versionNo;
     const target = path.resolve(this.root, options.directory ?? safeDirectoryName(remoteName));
@@ -122,7 +153,9 @@ export class SyncEngine {
     const config = await loadConfig(this.root);
     const branch = currentBranch(this.root);
     const dirty = worktreeChanges(this.root);
-    const base = branchExists(this.root, config.git.remoteBranch) ? headCommit(this.root, config.git.remoteBranch) : undefined;
+    const base = branchExists(this.root, config.git.remoteBranch)
+      ? headCommit(this.root, config.git.remoteBranch)
+      : undefined;
     const changes = base ? await buildPushPlan(this.root, base, config.ignore.patterns) : [];
     const data = {
       project: config.project,
@@ -301,11 +334,14 @@ export class SyncEngine {
   }
 }
 
+// A crash between acquire and release leaves the lock file behind, so the
+// owner is checked before refusing to run: a lock whose process is gone is
+// released and the operation retries once.
+const staleLockAgeMs = 2 * 60_000;
+
 async function withLock<T>(lockFile: string, action: () => Promise<T>): Promise<T> {
   await ensureDir(path.dirname(lockFile));
-  const handle = await fs.open(lockFile, "wx").catch(() => {
-    throw new TexleafError(`Another texleaf operation is running: ${lockFile}`);
-  });
+  const handle = await acquireLock(lockFile);
   try {
     await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
     return await action();
@@ -315,8 +351,62 @@ async function withLock<T>(lockFile: string, action: () => Promise<T>): Promise<
   }
 }
 
+async function acquireLock(lockFile: string): Promise<FileHandle> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await fs.open(lockFile, "wx");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw new TexleafError(`Could not create the sync lock ${lockFile}: ${(error as Error).message}`);
+      }
+      if (!(await releaseStaleLock(lockFile))) {
+        throw new TexleafError(`Another texleaf operation is running: ${lockFile}`);
+      }
+    }
+  }
+  throw new TexleafError(`Another texleaf operation is running: ${lockFile}`);
+}
+
+async function releaseStaleLock(lockFile: string): Promise<boolean> {
+  let owner: number | undefined;
+  try {
+    const record = JSON.parse(await fs.readFile(lockFile, "utf8")) as { pid?: unknown };
+    owner = typeof record.pid === "number" && Number.isInteger(record.pid) ? record.pid : undefined;
+  } catch {
+    owner = undefined;
+  }
+  if (owner !== undefined && owner > 0) {
+    if (isProcessAlive(owner)) return false;
+  } else {
+    // Unidentifiable owner: only reclaim once the lock is old enough that no
+    // live run could still be writing it.
+    const stat = await fs.stat(lockFile).catch(() => undefined);
+    if (!stat || Date.now() - stat.mtimeMs < staleLockAgeMs) return false;
+  }
+  await fs.rm(lockFile, { force: true });
+  return true;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but belongs to another user.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 function safeDirectoryName(value: string): string {
-  return value.trim().replace(/[/:\\\u0000-\u001f\u007f]+/g, "-").replace(/\s+/g, " ").replace(/[. ]+$/g, "") || "overleaf-project";
+  // eslint-disable-next-line no-control-regex -- control characters cannot appear in a directory name
+  const unsafeNameParts = /[/:\\\u0000-\u001f\u007f]+/g;
+  return (
+    value
+      .trim()
+      .replace(unsafeNameParts, "-")
+      .replace(/\s+/g, " ")
+      .replace(/[. ]+$/g, "") || "overleaf-project"
+  );
 }
 
 function printTreeDiff(diff: { added: string[]; modified: string[]; deleted: string[] }): void {

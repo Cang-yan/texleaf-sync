@@ -20,7 +20,8 @@ export const platforms = {
     host: "https://www.texpage.com",
     aliases: [],
     cookieNames: ["SESSIONID"],
-    insecureTls: false
+    insecureTls: false,
+    socketUrl: "wss://socket.texpage.com/socket.io/?EIO=4&transport=websocket"
   }
 } as const;
 
@@ -59,6 +60,18 @@ export function platformDisablesTls(platform: PlatformName | "custom", host: str
   return hostPlatform(host) === "cstcloud";
 }
 
+// Realtime endpoint for platforms that serve sockets from a separate host.
+// Custom hosts derive it from the configured host instead of assuming a vendor
+// domain, so self-hosted deployments keep working.
+export function platformSocketUrl(platform: PlatformName | "custom", host: string): string {
+  const known = platform !== "custom" ? platforms[platform] : undefined;
+  if (known && "socketUrl" in known) return known.socketUrl;
+  const url = new URL(normalizeHost(host));
+  const scheme = url.protocol === "https:" ? "wss:" : "ws:";
+  const hostname = url.hostname.replace(/^(www\.)?/, "socket.");
+  return `${scheme}//${hostname}/socket.io/?EIO=4&transport=websocket`;
+}
+
 export function texleafHome(): string {
   return path.join(os.homedir(), ".texleaf");
 }
@@ -70,7 +83,10 @@ export function globalSessionFile(platform: PlatformName, profile = "default"): 
 }
 
 export function safeFilePart(value: string): string {
-  const safe = value.trim().replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "");
+  const safe = value
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "");
   if (!safe) throw new ConfigError("Profile name must contain a safe filename character.");
   return safe;
 }

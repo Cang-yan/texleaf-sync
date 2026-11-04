@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -16,9 +17,15 @@ export async function ensureDir(dir: string): Promise<void> {
 
 export async function writeJsonAtomic(target: string, value: unknown, mode = 0o600): Promise<void> {
   await ensureDir(path.dirname(target));
-  const temp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.tmp`);
-  await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode });
-  await fs.rename(temp, target);
+  // The suffix keeps concurrent writers (even in one process) from sharing a temp file.
+  const temp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}-${randomUUID()}.tmp`);
+  try {
+    await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode });
+    await fs.rename(temp, target);
+  } catch (error) {
+    await fs.rm(temp, { force: true });
+    throw error;
+  }
   await fs.chmod(target, mode);
 }
 

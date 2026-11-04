@@ -10,7 +10,10 @@ test("operations ACK parser requires matching batch ID and ok status", () => {
   assert.equal(isSuccessfulOperationsAck('4310[{"batchId":"batch","status":"ok"}]', 1, "batch"), false);
   assert.equal(isSuccessfulOperationsAck('4310[{"batchId":"batch","status":"ok"}]', 10, "batch"), true);
   assert.throws(() => isSuccessfulOperationsAck('431[{"batchId":"other","status":"ok"}]', 1, "batch"), /status: ok/);
-  assert.throws(() => isSuccessfulOperationsAck('431[{"batchId":"batch","status":"invalid_payload"}]', 1, "batch"), /status: invalid_payload/);
+  assert.throws(
+    () => isSuccessfulOperationsAck('431[{"batchId":"batch","status":"invalid_payload"}]', 1, "batch"),
+    /status: invalid_payload/
+  );
 });
 
 async function makeSocketPair(t, onConnection) {

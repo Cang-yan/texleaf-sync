@@ -162,11 +162,15 @@ async function* walk(root: string): AsyncGenerator<string> {
 }
 
 function globMatch(value: string, pattern: string): boolean {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replaceAll("**", "\0")
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  // "**/" spans zero or more directories (gitignore semantics), "**" matches
+  // anything including slashes, and a single "*" stops at a directory boundary.
+  const regex = escaped
+    .replaceAll("**/", "\u0000")
+    .replaceAll("**", "\u0001")
     .replaceAll("*", "[^/]*")
-    .replaceAll("\0", ".*")
-    .replaceAll("?", ".");
-  return new RegExp(`^${escaped}$`).test(value);
+    .replaceAll("?", ".")
+    .replaceAll("\u0001", ".*")
+    .replaceAll("\u0000", "(?:.*/)?");
+  return new RegExp(`^${regex}$`).test(value);
 }

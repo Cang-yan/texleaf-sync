@@ -6,13 +6,23 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { type AuthSession, checkSession } from "./auth.js";
+import { type AuthSession, type AuthStatus, checkSession } from "./auth.js";
 import { AuthError, ConfigError } from "./errors.js";
 import { exists } from "./files.js";
 import { hostPlatform, normalizeHost, platformCookieNames } from "./platform.js";
 
 const execFileAsync = promisify(execFile);
 const manualLoginHint = "Run `texleaf auth login` without --from-chrome to paste cookies manually.";
+
+// Chromium derives the cookie encryption key from the Safe Storage password.
+const cookieKeySalt = "saltysalt";
+const cookieKeyIterations = 1003;
+const cookieKeyBytes = 16;
+// Cookie expiry is stored as microseconds since 1601-01-01 (the Windows epoch).
+const windowsEpochOffsetMs = 11_644_473_600_000n;
+const microsecondsPerMillisecond = 1_000n;
+const sqliteTimeoutMs = 5_000;
+const keychainTimeoutMs = 60_000;
 
 export interface ChromeCookieRow {
   host_key: string;
@@ -52,14 +62,14 @@ function defaultChromeAccess(): ChromeAccess {
 // batch creates a new importer so the user can retry after granting access.
 export function createChromeLogin(access: ChromeAccess = defaultChromeAccess()) {
   let password: Promise<string> | undefined;
-  const batchAccess = { ...access, readPassword: () => password ??= access.readPassword() };
+  const batchAccess = { ...access, readPassword: () => (password ??= access.readPassword()) };
   return (args: ChromeLoginOptions) => loginWithChrome(args, batchAccess);
 }
 
 export async function loginWithChrome(
   args: ChromeLoginOptions,
   access: ChromeAccess = defaultChromeAccess()
-): Promise<{ session: AuthSession; chromeProfile: string }> {
+): Promise<{ session: AuthSession; chromeProfile: string; status: AuthStatus }> {
   if (access.platform !== "darwin") {
     throw new AuthError(`Chrome cookie import currently supports macOS only. ${manualLoginHint}`);
   }
@@ -82,25 +92,33 @@ export async function loginWithChrome(
     }
   }
   if (!candidates.length) {
-    throw new AuthError(`No saved Chrome session cookies found for ${host}. Log in to this site in Chrome, then retry; if needed, quit Chrome so it saves its cookies. ${manualLoginHint}`);
+    throw new AuthError(
+      `No saved Chrome session cookies found for ${host}. Log in to this site in Chrome, then retry; if needed, quit Chrome so it saves its cookies. ${manualLoginHint}`
+    );
   }
   if (candidates.length > 1) {
     const choices = candidates.map(({ profile }) => JSON.stringify(path.basename(profile))).join(", ");
-    throw new AuthError(`Cookies for ${host} exist in multiple Chrome profiles: ${choices}. Choose one with --chrome-profile <directory>.`);
+    throw new AuthError(
+      `Cookies for ${host} exist in multiple Chrome profiles: ${choices}. Choose one with --chrome-profile <directory>.`
+    );
   }
   const candidate = candidates[0];
   // Do not access the Keychain until a single profile with matching cookies is selected.
   const encrypted = candidate.rows.some((row) => row.encrypted_value.length > 0);
-  const key = encrypted ? pbkdf2Sync(await access.readPassword(), "saltysalt", 1003, 16, "sha1") : undefined;
+  const key = encrypted
+    ? pbkdf2Sync(await access.readPassword(), cookieKeySalt, cookieKeyIterations, cookieKeyBytes, "sha1")
+    : undefined;
   let session: AuthSession;
   try {
     session = {
       host,
       profile: args.profile,
+      chromeProfile: candidate.profile,
       sslVerify: args.sslVerify,
       createdAt: new Date().toISOString(),
       cookies: candidate.rows.map((row) => {
         const value = decryptCookie(row, key);
+        // eslint-disable-next-line no-control-regex -- cookie values must not carry control characters
         if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(row.name) || /[\x00-\x20\x7f;]/.test(value)) {
           throw new AuthError("Chrome returned an invalid cookie. Log in again in Chrome and retry.");
         }
@@ -112,24 +130,32 @@ export async function loginWithChrome(
   }
   const status = await checkSession({ host, session, timeoutMs: args.timeoutMs });
   if (!status.loggedIn) {
-    throw new AuthError(`Chrome session is not logged in to ${host}. Log in again in the selected Chrome profile and retry. ${manualLoginHint}`);
+    throw new AuthError(
+      `Chrome session is not logged in to ${host}. Log in again in the selected Chrome profile and retry. ${manualLoginHint}`
+    );
   }
-  return { session, chromeProfile: path.basename(candidate.profile) };
+  return { session, chromeProfile: path.basename(candidate.profile), status };
 }
 
 async function chromeProfiles(userDataDir: string, selected?: string): Promise<string[]> {
   if (selected) {
-    const profile = selected.startsWith("~/") ? path.join(os.homedir(), selected.slice(2))
-      : path.isAbsolute(selected) || selected.includes("/") ? path.resolve(selected)
-      : path.join(userDataDir, selected);
+    const profile = selected.startsWith("~/")
+      ? path.join(os.homedir(), selected.slice(2))
+      : path.isAbsolute(selected) || selected.includes("/")
+        ? path.resolve(selected)
+        : path.join(userDataDir, selected);
     return [profile];
   }
   try {
     const entries = await fs.readdir(userDataDir, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory() && /^(Default|Profile \d+)$/.test(entry.name))
-      .map((entry) => path.join(userDataDir, entry.name)).sort();
+    return entries
+      .filter((entry) => entry.isDirectory() && /^(Default|Profile \d+)$/.test(entry.name))
+      .map((entry) => path.join(userDataDir, entry.name))
+      .sort();
   } catch {
-    throw new AuthError(`Could not find Chrome profiles. Open Chrome first, or pass --chrome-profile with a profile directory path. ${manualLoginHint}`);
+    throw new AuthError(
+      `Could not find Chrome profiles. Open Chrome first, or pass --chrome-profile with a profile directory path. ${manualLoginHint}`
+    );
   }
 }
 
@@ -142,12 +168,15 @@ export async function readChromeCookieRows(database: string, url: URL, names: st
   // Only import cookies that apply to the application's base path. A /project-only
   // cookie must not be sent to /user/personal_info or other endpoints by the CLI.
   const basePath = url.pathname.replace(/\/+$/, "") || "/";
-  const now = (BigInt(Date.now()) + 11_644_473_600_000n) * 1000n;
+  const now = (BigInt(Date.now()) + windowsEpochOffsetMs) * microsecondsPerMillisecond;
   try {
     const columns = await sqliteJson<{ name: string }>(database, "SELECT name FROM pragma_table_info('cookies');");
     const partitionFilter = columns.some((column) => column.name === "top_frame_site_key")
-      ? "AND top_frame_site_key = ''" : "";
-    const rows = await sqliteJson<ChromeCookieRow>(database, `
+      ? "AND top_frame_site_key = ''"
+      : "";
+    const rows = await sqliteJson<ChromeCookieRow>(
+      database,
+      `
       SELECT host_key, name, value, hex(encrypted_value) AS encrypted_value, path, is_secure,
         (SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'version') AS version
       FROM cookies
@@ -157,19 +186,26 @@ export async function readChromeCookieRows(database: string, url: URL, names: st
         ${url.protocol === "https:" ? "" : "AND is_secure = 0"}
         ${partitionFilter}
       ORDER BY length(path) DESC, creation_utc ASC;
-    `);
-    return rows.filter((row) => basePath === row.path || basePath.startsWith(row.path.endsWith("/") ? row.path : `${row.path}/`));
+    `
+    );
+    return rows.filter(
+      (row) => basePath === row.path || basePath.startsWith(row.path.endsWith("/") ? row.path : `${row.path}/`)
+    );
   } catch {
     // Child-process errors may contain captured stdout, including cookie values.
-    throw new AuthError(`Could not read Chrome's cookie database. Quit Chrome and retry; macOS must provide /usr/bin/sqlite3 and allow access to the profile. ${manualLoginHint}`);
+    throw new AuthError(
+      `Could not read Chrome's cookie database. Quit Chrome and retry; macOS must provide /usr/bin/sqlite3 and allow access to the profile. ${manualLoginHint}`
+    );
   }
 }
 
 async function sqliteJson<T>(database: string, query: string): Promise<T[]> {
-  const { stdout } = await execFileAsync("/usr/bin/sqlite3", [
-    "-init", "/dev/null", "-readonly", "-batch", "-json", "-cmd", ".timeout 1500", database, query
-  ], { encoding: "utf8", timeout: 5_000, maxBuffer: 1024 * 1024 });
-  return stdout.trim() ? JSON.parse(stdout) as T[] : [];
+  const { stdout } = await execFileAsync(
+    "/usr/bin/sqlite3",
+    ["-init", "/dev/null", "-readonly", "-batch", "-json", "-cmd", ".timeout 1500", database, query],
+    { encoding: "utf8", timeout: sqliteTimeoutMs, maxBuffer: 1024 * 1024 }
+  );
+  return stdout.trim() ? (JSON.parse(stdout) as T[]) : [];
 }
 
 function sqlString(value: string): string {
@@ -178,14 +214,18 @@ function sqlString(value: string): string {
 
 async function readChromePassword(): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("/usr/bin/security", [
-      "find-generic-password", "-w", "-s", "Chrome Safe Storage", "-a", "Chrome"
-    ], { encoding: "utf8", timeout: 60_000, maxBuffer: 16 * 1024 });
+    const { stdout } = await execFileAsync(
+      "/usr/bin/security",
+      ["find-generic-password", "-w", "-s", "Chrome Safe Storage", "-a", "Chrome"],
+      { encoding: "utf8", timeout: keychainTimeoutMs, maxBuffer: 16 * 1024 }
+    );
     const password = stdout.replace(/\r?\n$/, "");
     if (!password) throw new Error("Empty Keychain item");
     return password;
   } catch {
-    throw new AuthError(`Could not access Chrome Safe Storage in macOS Keychain. Allow access when prompted and retry. ${manualLoginHint}`);
+    throw new AuthError(
+      `Could not access Chrome Safe Storage in macOS Keychain. Allow access when prompted and retry. ${manualLoginHint}`
+    );
   }
 }
 

@@ -1,5 +1,8 @@
 export class TexleafError extends Error {
-  constructor(message: string, readonly code = "TEXLEAF_ERROR") {
+  constructor(
+    message: string,
+    readonly code = "TEXLEAF_ERROR"
+  ) {
     super(message);
     this.name = new.target.name;
   }

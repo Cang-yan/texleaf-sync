@@ -14,14 +14,14 @@ macOS.** On Windows and Linux, enter cookies manually with `texleaf auth login`.
 Install from a release URL:
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.4/texleaf-sync-0.1.4.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.5/texleaf-sync-0.1.5.tgz
 texleaf --version
 ```
 
 Or install a downloaded release tarball:
 
 ```bash
-npm install -g ./texleaf-sync-0.1.4.tgz
+npm install -g ./texleaf-sync-0.1.5.tgz
 texleaf --version
 ```
 
@@ -154,7 +154,7 @@ writes back to Overleaf only happen from committed local changes.
 
 ## Current Status
 
-Current version: CLI `0.1.4`.
+Current version: CLI `0.1.5`.
 
 Important commands:
 
@@ -232,8 +232,13 @@ follows [Chromium's macOS Keychain implementation](https://chromium.googlesource
 Log in to the target site in Chrome first. Allow `Chrome Safe Storage` access
 when macOS prompts. If cookies cannot be found or the database is locked, quit
 Chrome and retry so its cookies are flushed to disk. The import is a snapshot;
-rerun the command after the session expires. Chrome import currently supports
-macOS only and uses the system `sqlite3` and `security` commands. On other systems,
+before `clone`, `pull`, `push`, `verify`, and `auth status`, the CLI checks the saved
+session. On macOS, a missing or rejected session triggers one automatic Chrome
+import for the target host. Valid cookies are saved to the same session file and
+the command continues. Sessions imported from Chrome remember the selected
+profile directory for future refreshes. The CLI asks you to log in only if the
+import fails; network and server errors are reported without importing cookies.
+Chrome import uses the system `sqlite3` and `security` commands. On other systems,
 or if Keychain access is denied, use the interactive cookie login below.
 
 For custom Overleaf Community Edition hosts, pass `--host`. Password login is
@@ -379,4 +384,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 The tarball contains `dist/`, the READMEs, and the license file. It can be
-installed with `npm install -g ./texleaf-sync-0.1.4.tgz`.
+installed with `npm install -g ./texleaf-sync-0.1.5.tgz`.

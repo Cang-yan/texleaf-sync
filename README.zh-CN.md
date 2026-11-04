@@ -14,14 +14,14 @@ Windows 和 Linux 请通过 `texleaf auth login` 手动填充 Cookie。
 通过 release URL 安装：
 
 ```bash
-npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.4/texleaf-sync-0.1.4.tgz
+npm install -g https://github.com/Cang-yan/texleaf-sync/releases/download/v0.1.5/texleaf-sync-0.1.5.tgz
 texleaf --version
 ```
 
 或者安装已经下载到本地的 release tarball：
 
 ```bash
-npm install -g ./texleaf-sync-0.1.4.tgz
+npm install -g ./texleaf-sync-0.1.5.tgz
 texleaf --version
 ```
 
@@ -143,7 +143,7 @@ Git 是安全层：Overleaf 会被导入到一个受管理的分支，冲突交�
 
 ## 当前状态
 
-当前版本：CLI `0.1.4`。
+当前版本：CLI `0.1.5`。
 
 主要命令：
 
@@ -206,9 +206,12 @@ Cookie；已知平台只读取上面列出的会话 Cookie。随后通过 macOS 
 
 请先在 Chrome 登录目标站点，并在系统提示时允许访问 `Chrome Safe Storage`。
 如果找不到 Cookie 或数据库被锁定，退出 Chrome 后重试，以便它将 Cookie 写入磁盘。
-导入的是当前会话快照，过期后需要重新运行导入命令。目前自动导入仅支持 macOS，
-使用系统自带的 `sqlite3` 和 `security` 命令；其他系统或无法授权钥匙串时，使用下方
-的交互式 Cookie 登录方式。
+执行 `clone`、`pull`、`push`、`verify` 和 `auth status` 时，CLI 会先检查已保存的会话。
+macOS 上如果会话缺失或已失效，会自动尝试一次从 Chrome 导入目标站点的 Cookie；
+验证有效后保存到原会话文件，并继续当前操作。从 Chrome 导入的会话会记住所选配置
+目录，供下次自动刷新使用。只有自动导入失败才提示登录；网络或服务端故障会直接
+报告，不会触发 Cookie 导入。自动导入使用系统自带的 `sqlite3` 和 `security` 命令；
+其他系统或无法授权钥匙串时，使用下方的交互式 Cookie 登录方式。
 
 自定义 Overleaf Community Edition host 使用 `--host`。本地 Docker 或自部署服务通常
 直接用用户名密码登录最省事；传 `--email` 后，CLI 会提示输入密码。
@@ -348,4 +351,4 @@ ls -lh texleaf-sync-*.tgz
 ```
 
 tarball 会包含 `dist/`、README 和 LICENSE，可用
-`npm install -g ./texleaf-sync-0.1.4.tgz` 安装。
+`npm install -g ./texleaf-sync-0.1.5.tgz` 安装。

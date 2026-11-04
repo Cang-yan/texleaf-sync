@@ -69,11 +69,19 @@ export async function chooseAuthTarget(
       const choice = (await io.question("Platform [1]: ")).trim() || "1";
       if (choice === customChoice) {
         const host = normalizeHost(await io.question("Project service host: "));
-        return { host, platform: hostPlatform(host), sessionFile: options.sessionFile ?? path.resolve(".texleaf/session.json") };
+        return {
+          host,
+          platform: hostPlatform(host),
+          sessionFile: options.sessionFile ?? path.resolve(".texleaf/session.json")
+        };
       }
       const platform = knownPlatforms.find((_, index) => choice === String(index + 1));
       if (platform) {
-        return { host: platformHost(platform), platform, sessionFile: options.sessionFile ?? services.sessionFile(platform, profile) };
+        return {
+          host: platformHost(platform),
+          platform,
+          sessionFile: options.sessionFile ?? services.sessionFile(platform, profile)
+        };
       }
       if (choice !== chromeChoice || services.platform !== "darwin") {
         io.write("Choose one of the listed options.");
@@ -82,16 +90,21 @@ export async function chooseAuthTarget(
     }
 
     if (services.platform !== "darwin") {
-      throw new TexleafError("Chrome cookie import currently supports macOS only. Run `texleaf auth login` to enter cookies manually.");
+      throw new TexleafError(
+        "Chrome cookie import currently supports macOS only. Run `texleaf auth login` to enter cookies manually."
+      );
     }
     if (options.sessionFile) {
-      const message = "Importing all platforms needs separate session files. Omit --session-file, or use --platform <name> --from-chrome for one platform.";
+      const message =
+        "Importing all platforms needs separate session files. Omit --session-file, or use --platform <name> --from-chrome for one platform.";
       if (fromChrome) throw new TexleafError(message);
       io.write(message);
       continue;
     }
     fromChrome = false;
-    io.write("Checking Chrome cookies for all supported platforms; macOS may ask for Chrome Safe Storage Keychain access.");
+    io.write(
+      "Checking Chrome cookies for all supported platforms; macOS may ask for Chrome Safe Storage Keychain access."
+    );
     const importSession = services.createChromeLogin();
     const missing: PlatformName[] = [];
     for (const platform of knownPlatforms) {
@@ -116,10 +129,14 @@ export async function chooseAuthTarget(
         await services.saveSession(sessionFile, imported.session);
       } catch {
         missing.push(platform);
-        io.write(`${platform}: valid Chrome session found, but could not save it to ${sessionFile}. Check file permissions and retry.`);
+        io.write(
+          `${platform}: valid Chrome session found, but could not save it to ${sessionFile}. Check file permissions and retry.`
+        );
         continue;
       }
-      io.write(`${platform}: imported Chrome profile ${JSON.stringify(imported.chromeProfile)}. Saved session to ${sessionFile}`);
+      io.write(
+        `${platform}: imported Chrome profile ${JSON.stringify(imported.chromeProfile)}. Saved session to ${sessionFile}`
+      );
     }
 
     if (!missing.length) {
@@ -128,7 +145,9 @@ export async function chooseAuthTarget(
     }
     io.write(`Manual login needed for: ${missing.join(", ")}.`);
     if (!io.interactive) {
-      throw new TexleafError("Some Chrome sessions could not be imported. Run `texleaf auth login` in a terminal to enter cookies manually.");
+      throw new TexleafError(
+        "Some Chrome sessions could not be imported. Run `texleaf auth login` in a terminal to enter cookies manually."
+      );
     }
     if (missing.length === knownPlatforms.length) {
       io.write("No Chrome sessions were saved. Please enter cookies manually; returning to the login menu.");

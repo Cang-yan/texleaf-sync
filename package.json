@@ -1,7 +1,7 @@
 {
   "name": "texleaf-sync",
-  "version": "0.1.4",
-  "description": "Git-safe TypeScript CLI for syncing Overleaf Community Edition projects.",
+  "version": "0.1.5",
+  "description": "Git-safe TypeScript CLI for syncing Overleaf and TexPage projects.",
   "type": "module",
   "license": "MIT",
   "author": "",
@@ -19,7 +19,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "check": "tsc -p tsconfig.json --noEmit && eslint . && prettier --check .",
+    "lint": "eslint .",
+    "format": "prettier --write .",
     "test": "npm run build && node --test test/*.test.js",
     "start": "node dist/cli.js",
     "prepack": "npm run build",
@@ -34,9 +36,14 @@
     "yauzl": "^3.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "@types/yauzl": "^2.10.3",
-    "typescript": "^5.7.0"
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.72.0"
   }
 }

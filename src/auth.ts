@@ -1,9 +1,14 @@
 import { URL } from "node:url";
-import { Agent, fetch as undiciFetch } from "undici";
+import { Agent, fetch as undiciFetch, type Response as UndiciResponse } from "undici";
 
+import { DEFAULT_TIMEOUT_MS } from "./config.js";
 import { AuthError, ConfigError } from "./errors.js";
 import { readJson, writeJsonAtomic } from "./files.js";
 import { hostPlatform, normalizeHost } from "./platform.js";
+
+// HTTP types come from undici, the implementation actually used at runtime.
+export type HttpResponse = UndiciResponse;
+export type FetchInit = NonNullable<Parameters<typeof undiciFetch>[1]>;
 
 export interface StoredCookie {
   name: string;
@@ -18,7 +23,10 @@ export interface AuthSession {
   profile: string;
   cookies: StoredCookie[];
   createdAt: string;
-  sslVerify: boolean;
+  /** Absent in sessions written by older versions; treat that as verified. */
+  sslVerify?: boolean;
+  /** Chrome directory used to import this session, for later automatic refresh. */
+  chromeProfile?: string;
 }
 
 export interface AuthStatus {
@@ -26,6 +34,8 @@ export interface AuthStatus {
   email?: string;
   userId?: string;
   error?: string;
+  /** The server rejected authentication, rather than failing to respond. */
+  authRequired?: boolean;
 }
 
 export function cookieDomain(host: string): string {
@@ -94,12 +104,18 @@ export async function checkSession(args: {
           Cookie: cookieHeader(args.session)
         },
         redirect: "manual",
-        timeoutMs: args.timeoutMs ?? 16_000,
-        sslVerify: args.session.sslVerify
+        timeoutMs: args.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        sslVerify: args.session.sslVerify !== false
       });
-      if (response.status !== 200) return { loggedIn: false, error: `HTTP ${response.status}` };
+      if (response.status !== 200) return rejectedSessionStatus(response.status);
       const data = (await response.json()) as { status?: { code?: unknown } };
-      if (data.status?.code !== 1) return { loggedIn: false, error: "TexPage session was rejected." };
+      if (data.status?.code !== 1) {
+        return {
+          loggedIn: false,
+          error: "TexPage session was rejected.",
+          authRequired: typeof data.status?.code === "number"
+        };
+      }
       return { loggedIn: true };
     }
     const response = await fetchWithTimeout(`${normalizeHost(args.host)}/user/personal_info`, {
@@ -108,10 +124,10 @@ export async function checkSession(args: {
         Cookie: cookieHeader(args.session)
       },
       redirect: "manual",
-      timeoutMs: args.timeoutMs ?? 16_000,
-      sslVerify: args.session.sslVerify
+      timeoutMs: args.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      sslVerify: args.session.sslVerify !== false
     });
-    if (response.status !== 200) return { loggedIn: false, error: `HTTP ${response.status}` };
+    if (response.status !== 200) return rejectedSessionStatus(response.status);
     const data = (await response.json()) as Record<string, unknown>;
     return {
       loggedIn: true,
@@ -123,6 +139,14 @@ export async function checkSession(args: {
   }
 }
 
+function rejectedSessionStatus(status: number): AuthStatus {
+  return {
+    loggedIn: false,
+    error: `HTTP ${status}`,
+    authRequired: status === 401 || status === 403 || (status >= 300 && status < 400)
+  };
+}
+
 export async function loginWithPassword(args: {
   host: string;
   profile: string;
@@ -132,7 +156,7 @@ export async function loginWithPassword(args: {
   timeoutMs?: number;
 }): Promise<AuthSession> {
   const host = normalizeHost(args.host);
-  const timeoutMs = args.timeoutMs ?? 16_000;
+  const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const loginPage = await fetchWithTimeout(`${host}/login`, {
     headers: { Accept: "text/html,application/xhtml+xml" },
     redirect: "manual",
@@ -175,31 +199,41 @@ export async function loginWithPassword(args: {
 
 export async function fetchWithTimeout(
   url: string,
-  init: RequestInit & { timeoutMs: number; sslVerify: boolean }
-): Promise<Response> {
+  init: FetchInit & { timeoutMs: number; sslVerify?: boolean }
+): Promise<HttpResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs);
   const { timeoutMs: _timeoutMs, sslVerify, ...requestInit } = init;
-  const dispatcher = sslVerify ? undefined : new Agent({ connect: { rejectUnauthorized: false } });
+  // Only an explicit false turns verification off; a missing value from an old
+  // session file must not silently downgrade to an insecure connection.
+  const dispatcher = sslVerify === false ? insecureTlsAgent() : undefined;
   try {
-    return (await undiciFetch(url, {
-      ...requestInit,
-      dispatcher,
-      signal: controller.signal
-    } as Parameters<typeof undiciFetch>[1])) as unknown as Response;
+    return await undiciFetch(url, { ...requestInit, dispatcher, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
 }
 
+// One agent for every insecure request: building one per call leaks sockets.
+let sharedInsecureAgent: Agent | undefined;
+
+function insecureTlsAgent(): Agent {
+  return (sharedInsecureAgent ??= new Agent({ connect: { rejectUnauthorized: false } }));
+}
+
 export function extractCsrfToken(html: string): string {
-  const match = html.match(/<meta[^>]+name=["']ol-csrfToken["'][^>]+content=["']([^"']+)["']/i)
-    ?? html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']ol-csrfToken["']/i);
-  if (!match) throw new AuthError("Could not find Overleaf CSRF token in project page.");
+  const match =
+    html.match(/<meta[^>]+name=["']ol-csrfToken["'][^>]+content=["']([^"']+)["']/i) ??
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']ol-csrfToken["']/i);
+  if (!match) throw new AuthError("Could not find the Overleaf CSRF token in the returned page.");
   return match[1];
 }
 
-function mergeSetCookies(cookies: Map<string, StoredCookie>, headers: string[], host: string): Map<string, StoredCookie> {
+function mergeSetCookies(
+  cookies: Map<string, StoredCookie>,
+  headers: string[],
+  host: string
+): Map<string, StoredCookie> {
   for (const header of headers) {
     const cookie = parseSetCookie(header, host);
     if (!cookie) continue;
@@ -209,7 +243,10 @@ function mergeSetCookies(cookies: Map<string, StoredCookie>, headers: string[], 
 }
 
 function parseSetCookie(header: string, host: string): StoredCookie | undefined {
-  const parts = header.split(";").map((part) => part.trim()).filter(Boolean);
+  const parts = header
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean);
   const [nameValue, ...attributes] = parts;
   if (!nameValue) return undefined;
   const equals = nameValue.indexOf("=");

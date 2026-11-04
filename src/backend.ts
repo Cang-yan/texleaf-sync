@@ -2,24 +2,29 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { URL, URLSearchParams } from "node:url";
 import WebSocket from "ws";
 
 import {
   type AuthSession,
-  checkSession,
+  type FetchInit,
+  type HttpResponse,
   cookieHeader,
   extractCsrfToken,
-  fetchWithTimeout,
-  loadSession
+  fetchWithTimeout
 } from "./auth.js";
 import type { TexleafConfig } from "./config.js";
 import { resolveRepoPath } from "./config.js";
 import { BackendError } from "./errors.js";
-import { ensureDir } from "./files.js";
+import { type JsonRecord, isRecord, recordAt } from "./json.js";
 import { warn, Progress } from "./log.js";
 import { normalizeHost } from "./platform.js";
+import { ensureSession } from "./session.js";
 import { normalizeProjectPath, safeExtractZip } from "./snapshot.js";
+
+const textPollIntervalMs = 250;
 
 export interface Entity {
   id: string;
@@ -37,28 +42,27 @@ export class OverleafBackend {
 
   constructor(
     private readonly repoRoot: string,
-    private readonly config: TexleafConfig
+    private readonly config: TexleafConfig,
+    private readonly sessionLoader = ensureSession
   ) {
     this.host = normalizeHost(config.project.host);
   }
 
   async authenticate(): Promise<void> {
-    const sessionFile = resolveRepoPath(this.repoRoot, this.config.auth.sessionFile);
-    this.session = await loadSession(sessionFile, this.host);
-    this.session = { ...this.session, sslVerify: this.config.backend.sslVerify };
     if (!this.config.backend.sslVerify) {
       warn(`TLS certificate verification is disabled for ${this.host}.`);
     }
-    const status = await checkSession({
+    this.session = undefined;
+    this.csrf = undefined;
+    this.tree = undefined;
+    const { session } = await this.sessionLoader({
       host: this.host,
-      session: this.session,
+      profile: this.config.auth.profile,
+      sessionFile: resolveRepoPath(this.repoRoot, this.config.auth.sessionFile),
+      sslVerify: this.config.backend.sslVerify,
       timeoutMs: this.config.backend.timeoutMs
     });
-    if (!status.loggedIn) {
-      throw new BackendError(
-        `Overleaf session is not logged in: ${status.error ?? "unknown error"}\nPlease log in again: texleaf auth login`
-      );
-    }
+    this.session = session;
   }
 
   async projectName(projectId: string): Promise<string | undefined> {
@@ -77,19 +81,18 @@ export class OverleafBackend {
     const progress = new Progress("Downloading snapshot", total);
     let downloaded = 0;
     try {
-      const file = fs.createWriteStream(zipPath);
-      if (!response.body) throw new BackendError("Overleaf returned an empty snapshot response.");
-      const reader = response.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        file.write(value);
-        downloaded += value.byteLength;
-        progress.update(downloaded);
-      }
-      await new Promise<void>((resolve, reject) => {
-        file.end((error?: Error | null) => (error ? reject(error) : resolve()));
+      const body = response.body;
+      if (!body) throw new BackendError("Overleaf returned an empty snapshot response.");
+      // pipeline streams with backpressure and turns write errors into rejections
+      // instead of unhandled stream errors.
+      const counter = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+          downloaded += chunk.byteLength;
+          progress.update(downloaded);
+          callback(null, chunk);
+        }
       });
+      await pipeline(Readable.fromWeb(body), counter, fs.createWriteStream(zipPath));
       progress.finish(downloaded);
       await safeExtractZip(zipPath, destDir);
     } catch (error) {
@@ -210,12 +213,20 @@ export class OverleafBackend {
     form.append("name", fileName);
     form.append("type", "application/octet-stream");
     form.append("qqfile", new Blob([new Uint8Array(content)], { type: "application/octet-stream" }), fileName);
-    const response = await this.request("POST", `/Project/${projectId}/upload?${new URLSearchParams({ folder_id: folderId })}`, {
-      csrfProjectId: projectId,
-      body: form
-    });
+    const response = await this.request(
+      "POST",
+      `/Project/${projectId}/upload?${new URLSearchParams({ folder_id: folderId })}`,
+      {
+        csrfProjectId: projectId,
+        body: form
+      }
+    );
     const data = (await response.json()) as Record<string, unknown>;
-    if (!data.success || typeof data.entity_id !== "string" || (data.entity_type !== "doc" && data.entity_type !== "file")) {
+    if (
+      !data.success ||
+      typeof data.entity_id !== "string" ||
+      (data.entity_type !== "doc" && data.entity_type !== "file")
+    ) {
       throw new BackendError(`Overleaf upload failed for ${fileName}: ${JSON.stringify(data)}`);
     }
     return {
@@ -234,13 +245,15 @@ export class OverleafBackend {
         entity.id,
         { encodeRanges: true, supportsHistoryOT: true }
       ]);
-      if (joined.length < 3 || joined[0] !== null) throw new BackendError(`Overleaf rejected joinDoc for ${entity.path}.`);
-      const lines = joined[1];
+      if (joined.length < 3 || joined[0] !== null)
+        throw new BackendError(`Overleaf rejected joinDoc for ${entity.path}.`);
+      const rawLines = joined[1];
       const version = joined[2];
       const otType = joined.length > 5 ? joined[5] : "sharejs-text-ot";
-      if (!Array.isArray(lines) || !lines.every((line) => typeof line === "string")) {
+      if (!Array.isArray(rawLines) || !rawLines.every((line): line is string => typeof line === "string")) {
         throw new BackendError("Overleaf joinDoc returned malformed document lines.");
       }
+      const lines = rawLines;
       if (typeof version !== "number") throw new BackendError("Overleaf joinDoc returned an invalid document version.");
       if (otType !== "sharejs-text-ot") throw new BackendError(`Unsupported Overleaf text OT type: ${String(otType)}`);
       const current = lines.map((line) => decodeOverleafLine(line)).join("\n");
@@ -252,7 +265,8 @@ export class OverleafBackend {
         }
       }
       const applied = await this.socketRpc(socket, 2, "applyOtUpdate", [entity.id, { v: version, op }]);
-      if (applied.length && applied[0] !== null) throw new BackendError(`Overleaf rejected text update for ${entity.path}.`);
+      if (applied.length && applied[0] !== null)
+        throw new BackendError(`Overleaf rejected text update for ${entity.path}.`);
       await this.waitForTextContent(projectId, entity, content);
     } finally {
       socket.close();
@@ -264,8 +278,8 @@ export class OverleafBackend {
     const deadline = Date.now() + this.config.backend.timeoutMs;
     while (Date.now() <= deadline) {
       const response = await this.request("GET", `/Project/${projectId}/doc/${entity.id}/download`);
-      if ((await response.text()) === expected) return;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      if (comparableText(await response.text()) === comparableText(expected)) return;
+      await new Promise((resolve) => setTimeout(resolve, textPollIntervalMs));
     }
     throw new BackendError(`Text update for ${entity.path} was acknowledged but did not converge.`);
   }
@@ -274,11 +288,12 @@ export class OverleafBackend {
     if (this.tree && !refresh) return this.tree;
     const { socket, event } = await this.openJoinedSocket(projectId);
     try {
-      const rootFolders = event.args?.[0]?.project?.rootFolder;
+      const project = recordAt(recordAt(event.args, 0), "project");
+      const rootFolders = project ? project.rootFolder : undefined;
       if (!Array.isArray(rootFolders) || rootFolders.length !== 1) {
         throw new BackendError("Malformed Overleaf project tree response.");
       }
-      this.tree = entityFromSocketFolder(rootFolders[0], "");
+      this.tree = entityFromSocketFolder(rootFolders[0] as JsonRecord, "");
       return this.tree;
     } finally {
       socket.close();
@@ -292,7 +307,7 @@ export class OverleafBackend {
     return flatten(root).find((entity) => entity.path === normalized);
   }
 
-  private async openJoinedSocket(projectId: string): Promise<{ socket: WebSocket; event: Record<string, any> }> {
+  private async openJoinedSocket(projectId: string): Promise<{ socket: WebSocket; event: JsonRecord }> {
     const socket = await this.openSocket(projectId);
     try {
       const event = await this.receiveSocketEvent(socket, "joinProjectResponse");
@@ -321,9 +336,17 @@ export class OverleafBackend {
       headers: { Cookie: cookieHeader(session) },
       rejectUnauthorized: this.config.backend.sslVerify
     });
+    // One permanent error listener keeps a late failure from becoming an
+    // unhandled "error" event, and records it for the pending read.
+    socket.on("error", (error) => failSocket(socket, error));
+    socket.on("close", () => failSocket(socket, new BackendError("Overleaf socket closed unexpectedly.")));
     await new Promise<void>((resolve, reject) => {
-      socket.once("open", () => resolve());
-      socket.once("error", reject);
+      const onError = (error: Error) => reject(error);
+      socket.once("open", () => {
+        socket.off("error", onError);
+        resolve();
+      });
+      socket.once("error", onError);
     });
     return socket;
   }
@@ -344,12 +367,12 @@ export class OverleafBackend {
     }
   }
 
-  private async receiveSocketEvent(socket: WebSocket, eventName: string): Promise<Record<string, any>> {
+  private async receiveSocketEvent(socket: WebSocket, eventName: string): Promise<JsonRecord> {
     while (true) {
       const line = await this.receiveSocketLine(socket);
       if (line.startsWith("7:")) throw new BackendError("Overleaf socket rejected project access.");
       const event = parseSocketEvent(line);
-      if (event?.name === eventName) return event;
+      if (event && event.name === eventName) return event;
     }
   }
 
@@ -371,9 +394,9 @@ export class OverleafBackend {
       headers?: Record<string, string>;
       csrfProjectId?: string;
       json?: unknown;
-      body?: BodyInit;
+      body?: FetchInit["body"];
     } = {}
-  ): Promise<Response> {
+  ): Promise<HttpResponse> {
     const session = this.requireSession();
     const headers: Record<string, string> = {
       Accept: "application/json, text/plain, */*",
@@ -399,7 +422,9 @@ export class OverleafBackend {
       throw new BackendError(`Overleaf HTTP ${method} ${route} redirected unexpectedly.`);
     }
     if (response.status >= 400) {
-      throw new BackendError(`Overleaf HTTP ${method} ${route} failed with HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+      throw new BackendError(
+        `Overleaf HTTP ${method} ${route} failed with HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`
+      );
     }
     return response;
   }
@@ -427,8 +452,13 @@ export class OverleafBackend {
 }
 
 export function cleanProjectTitle(htmlOrTitle: string): string | undefined {
-  const title = htmlOrTitle.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] ?? htmlOrTitle;
-  let cleaned = title.replace(/\s+/g, " ").trim();
+  // A response without a readable title (an error page, a JSON body) must not
+  // become the project name; return undefined instead of the raw payload.
+  const tagged = htmlOrTitle.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1];
+  const looksLikeMarkup = /[<>{}\n]/.test(htmlOrTitle);
+  const title = tagged ?? (looksLikeMarkup ? undefined : htmlOrTitle);
+  if (title === undefined) return undefined;
+  let cleaned = decodeHtmlEntities(title).replace(/\s+/g, " ").trim();
   if (cleaned.endsWith(", Online LaTeX Editor") && cleaned.includes(" - ")) {
     cleaned = cleaned.slice(0, cleaned.lastIndexOf(" - ")).trim();
   }
@@ -436,6 +466,34 @@ export function cleanProjectTitle(htmlOrTitle: string): string | undefined {
     if (cleaned.endsWith(suffix)) cleaned = cleaned.slice(0, -suffix.length).trim();
   }
   return cleaned || undefined;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(
+    /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|(amp|lt|gt|quot|apos));/g,
+    (entity, decimal: string, hex: string, named: string) => {
+      const code = decimal ? Number(decimal) : hex ? parseInt(hex, 16) : undefined;
+      if (code !== undefined) {
+        try {
+          return String.fromCodePoint(code);
+        } catch {
+          return entity;
+        }
+      }
+      switch (named) {
+        case "amp":
+          return "&";
+        case "lt":
+          return "<";
+        case "gt":
+          return ">";
+        case "quot":
+          return '"';
+        default:
+          return "'";
+      }
+    }
+  );
 }
 
 export interface TextOp {
@@ -469,35 +527,42 @@ export function textReplacementOperation(oldText: string, newText: string): Text
   return op;
 }
 
+// The download endpoint may rewrite line endings or add a final newline; the
+// convergence check must not fail on formatting the user cannot see.
+function comparableText(value: string): string {
+  return value.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+}
+
 function decodeOverleafLine(line: string): string {
   if ([...line].some((char) => (char.codePointAt(0) ?? 0) > 255)) return line;
   return Buffer.from([...line].map((char) => char.charCodeAt(0))).toString("utf8");
 }
 
-function entityFromSocketFolder(data: Record<string, any>, parentPath: string): Entity {
+function entityFromSocketFolder(data: JsonRecord, parentPath: string): Entity {
   const name = String(data.name);
   const folderPath = !parentPath && name === "rootFolder" ? "" : joinProjectPath(parentPath, name);
   const folder: Entity = { id: String(data._id), name, type: "folder", path: folderPath, children: [] };
-  for (const child of data.folders ?? []) folder.children.push(entityFromSocketFolder(child, folderPath));
-  for (const child of data.fileRefs ?? []) {
-    folder.children.push({
-      id: String(child._id),
-      name: String(child.name),
-      type: "file",
-      path: joinProjectPath(folderPath, String(child.name)),
-      children: []
-    });
+  for (const child of childrenOf(data, "folders")) {
+    folder.children.push(entityFromSocketFolder(child as JsonRecord, folderPath));
   }
-  for (const child of data.docs ?? []) {
-    folder.children.push({
-      id: String(child._id),
-      name: String(child.name),
-      type: "doc",
-      path: joinProjectPath(folderPath, String(child.name)),
-      children: []
-    });
+  for (const type of ["file", "doc"] as const) {
+    for (const child of childrenOf(data, type === "file" ? "fileRefs" : "docs")) {
+      const record = child as JsonRecord;
+      const childName = String(record.name);
+      folder.children.push({
+        id: String(record._id),
+        name: childName,
+        type,
+        path: joinProjectPath(folderPath, childName),
+        children: []
+      });
+    }
   }
   return folder;
+}
+
+function childrenOf(data: JsonRecord, key: string): unknown[] {
+  return Array.isArray(data[key]) ? (data[key] as unknown[]) : [];
 }
 
 function flatten(root: Entity): Entity[] {
@@ -508,16 +573,26 @@ function joinProjectPath(parent: string, name: string): string {
   return normalizeProjectPath(parent ? `${parent}/${name}` : name);
 }
 
-function parseSocketEvent(line: string): Record<string, any> | undefined {
+function parseSocketEvent(line: string): JsonRecord | undefined {
   if (!line.startsWith("5:")) return undefined;
-  return JSON.parse(line.slice(2).replace(/^:+/, "")) as Record<string, any>;
+  const parsed: unknown = JSON.parse(line.slice(2).replace(/^:+/, ""));
+  return isRecord(parsed) ? parsed : undefined;
+}
+
+const socketFailures = new WeakMap<WebSocket, Error>();
+
+function failSocket(socket: WebSocket, error: Error): void {
+  if (!socketFailures.has(socket)) socketFailures.set(socket, error);
 }
 
 async function nextSocketMessage(socket: WebSocket): Promise<string> {
+  const failure = socketFailures.get(socket);
+  if (failure) throw failure;
   return await new Promise((resolve, reject) => {
     const onMessage = (data: WebSocket.RawData) => cleanup(() => resolve(data.toString("utf8")));
     const onError = (error: Error) => cleanup(() => reject(error));
-    const onClose = () => cleanup(() => reject(new BackendError("Overleaf socket closed unexpectedly.")));
+    const onClose = () =>
+      cleanup(() => reject(socketFailures.get(socket) ?? new BackendError("Overleaf socket closed unexpectedly.")));
     const cleanup = (next: () => void) => {
       socket.off("message", onMessage);
       socket.off("error", onError);

@@ -8,10 +8,18 @@ import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from "undici";
 
 import { cleanProjectTitle, textReplacementOperation } from "../dist/backend.js";
 import { checkSession, loadSession, loginWithPassword, saveSession, sessionFromCookieHeader } from "../dist/auth.js";
-import { defaultConfig, ensureProjectGitignore, writeConfig } from "../dist/config.js";
+import { defaultConfig, ensureProjectGitignore, loadConfig, writeConfig } from "../dist/config.js";
 import { buildPushPlan } from "../dist/diff.js";
 import { exists, removeDirectoriesByPrefix } from "../dist/files.js";
-import { ensureGitRepo, gitIgnoredTrackedFiles, hasDiffBetween, headCommit, importSnapshotToBranch, mergeBase, resetHard, runGit } from "../dist/git.js";
+import {
+  ensureGitRepo,
+  gitIgnoredTrackedFiles,
+  hasDiffBetween,
+  importSnapshotToBranch,
+  mergeBase,
+  resetHard,
+  runGit
+} from "../dist/git.js";
 import { globalSessionFile, hostPlatform, parseProjectLocator } from "../dist/platform.js";
 import { isIgnored, normalizeProjectPath } from "../dist/snapshot.js";
 import { SyncEngine } from "../dist/sync.js";
@@ -19,6 +27,15 @@ import { SyncEngine } from "../dist/sync.js";
 test("cleans Overleaf and cstcloud project titles", () => {
   assert.equal(cleanProjectTitle("Paper - Overleaf, Online LaTeX Editor"), "Paper");
   assert.equal(cleanProjectTitle("Paper - 中国科技云论文协同编辑服务, Online LaTeX Editor"), "Paper");
+});
+
+test("never promotes an error payload to a project title", () => {
+  assert.equal(cleanProjectTitle("<html><head><title></title></head></html>"), undefined);
+  assert.equal(cleanProjectTitle('{"error":"forbidden"}'), undefined);
+  assert.equal(
+    cleanProjectTitle("<title>Sections &amp; Appendix - Overleaf, Online LaTeX Editor</title>"),
+    "Sections & Appendix"
+  );
 });
 
 test("builds minimal text replacement operations", () => {
@@ -39,6 +56,10 @@ test("matches sync ignore patterns", () => {
   assert.equal(isIgnored(".texleaf/config.json", [".texleaf/"]), true);
   assert.equal(isIgnored("main.tex", [".texleaf/"]), false);
   assert.equal(isIgnored("build/main.aux", ["*.aux"]), true);
+  assert.equal(isIgnored("foo.tex", ["**/foo.tex"]), true);
+  assert.equal(isIgnored("a/sub/foo.tex", ["**/foo.tex"]), true);
+  assert.equal(isIgnored("sub/main.tex", ["sub/*.tex"]), true);
+  assert.equal(isIgnored("a/sub/main.tex", ["sub/*.tex"]), false);
 });
 
 test("prunes stale snapshot directories by prefix", async () => {
@@ -158,8 +179,14 @@ async function makeSyncFixture(t) {
   const repo = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-sync-push-history-"));
   t.after(() => fs.rm(repo, { recursive: true, force: true }));
   const config = defaultConfig({
-    repoRoot: repo, host: "https://www.texpage.com", projectId: "project-key", ownerKey: "owner-key",
-    versionNo: "version-key", projectName: "sync-test", platform: "texpage", sessionFile: "session.json"
+    repoRoot: repo,
+    host: "https://www.texpage.com",
+    projectId: "project-key",
+    ownerKey: "owner-key",
+    versionNo: "version-key",
+    projectName: "sync-test",
+    platform: "texpage",
+    sessionFile: "session.json"
   });
   config.ignore.patterns.push("local-private.txt");
   await writeConfig(repo, config);
@@ -168,16 +195,28 @@ async function makeSyncFixture(t) {
   const snapshot = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-sync-push-snapshot-"));
   t.after(() => fs.rm(snapshot, { recursive: true, force: true }));
   await fs.writeFile(path.join(snapshot, "paper.tex"), remote.get("paper.tex"));
-  await importSnapshotToBranch({ repo, snapshotDir: snapshot, branch: config.git.remoteBranch, patterns: config.ignore.patterns, message: "initial remote" });
+  await importSnapshotToBranch({
+    repo,
+    snapshotDir: snapshot,
+    branch: config.git.remoteBranch,
+    patterns: config.ignore.patterns,
+    message: "initial remote"
+  });
   resetHard(repo, config.git.remoteBranch);
   await ensureProjectGitignore(repo);
   await fs.writeFile(path.join(repo, "local-private.txt"), "tracked and ignored by texleaf\n");
   runGit(repo, ["add", ".gitignore", "local-private.txt"]);
-  runGit(repo, ["-c", "user.name=texleaf", "-c", "user.email=texleaf@example.invalid", "commit", "-m", "local ignored files"], { identity: true });
+  runGit(
+    repo,
+    ["-c", "user.name=texleaf", "-c", "user.email=texleaf@example.invalid", "commit", "-m", "local ignored files"],
+    { identity: true }
+  );
   const writes = [];
   const backend = {
     async authenticate() {},
-    async projectName() { return "sync-test"; },
+    async projectName() {
+      return "sync-test";
+    },
     async downloadSnapshot(_id, dir) {
       for (const [projectPath, content] of remote) {
         const target = path.join(dir, projectPath);
@@ -185,10 +224,21 @@ async function makeSyncFixture(t) {
         await fs.writeFile(target, content);
       }
     },
-    async createFolder(_id, projectPath) { writes.push(["folder", projectPath]); },
-    async writeTextFile(_id, projectPath, content) { writes.push(["text", projectPath]); remote.set(projectPath, content); },
-    async uploadBinaryFile(_id, projectPath, content) { writes.push(["binary", projectPath]); remote.set(projectPath, Buffer.from(content)); },
-    async deletePath(_id, projectPath) { writes.push(["delete", projectPath]); remote.delete(projectPath); },
+    async createFolder(_id, projectPath) {
+      writes.push(["folder", projectPath]);
+    },
+    async writeTextFile(_id, projectPath, content) {
+      writes.push(["text", projectPath]);
+      remote.set(projectPath, content);
+    },
+    async uploadBinaryFile(_id, projectPath, content) {
+      writes.push(["binary", projectPath]);
+      remote.set(projectPath, Buffer.from(content));
+    },
+    async deletePath(_id, projectPath) {
+      writes.push(["delete", projectPath]);
+      remote.delete(projectPath);
+    },
     async movePath(_id, oldPath, newPath) {
       writes.push(["move", oldPath, newPath]);
       if (!remote.has(oldPath)) throw new Error(`missing ${oldPath}`);
@@ -200,7 +250,9 @@ async function makeSyncFixture(t) {
   const git = (args) => runGit(repo, args).stdout.trim();
   const commit = (message) => {
     runGit(repo, ["add", "-A", "--", "."]);
-    runGit(repo, ["-c", "user.name=texleaf", "-c", "user.email=texleaf@example.invalid", "commit", "-m", message], { identity: true });
+    runGit(repo, ["-c", "user.name=texleaf", "-c", "user.email=texleaf@example.invalid", "commit", "-m", message], {
+      identity: true
+    });
   };
   return { repo, config, remote, writes, backend, engine, git, commit };
 }
@@ -208,35 +260,74 @@ async function makeSyncFixture(t) {
 test("successive push snapshots anchor the verified HEAD and preserve ignored files", async (t) => {
   const { repo, config, remote, writes, engine, git, commit } = await makeSyncFixture(t);
   const steps = [
-    async () => { await fs.writeFile(path.join(repo, "added.tex"), "new file\n"); commit("add file"); },
-    async () => { await fs.writeFile(path.join(repo, "paper.tex"), "modified paper\n"); commit("modify existing file"); },
-    async () => { await fs.mkdir(path.join(repo, "nested"), { recursive: true }); await fs.rename(path.join(repo, "added.tex"), path.join(repo, "nested", "moved.tex")); commit("move file"); },
+    async () => {
+      await fs.writeFile(path.join(repo, "added.tex"), "new file\n");
+      commit("add file");
+    },
+    async () => {
+      await fs.writeFile(path.join(repo, "paper.tex"), "modified paper\n");
+      commit("modify existing file");
+    },
+    async () => {
+      await fs.mkdir(path.join(repo, "nested"), { recursive: true });
+      await fs.rename(path.join(repo, "added.tex"), path.join(repo, "nested", "moved.tex"));
+      commit("move file");
+    },
     async () => {
       await fs.rm(path.join(repo, "nested", "moved.tex"));
       runGit(repo, ["rm", ".gitignore", "local-private.txt"]);
       await fs.writeFile(path.join(repo, "paper.tex"), "modified after removing ignored files\n");
       commit("delete fixture and tracked ignored files");
     },
-    async () => { await fs.writeFile(path.join(repo, "paper.tex"), "final paper\n"); commit("continue after ignored-file removal"); }
+    async () => {
+      await fs.writeFile(path.join(repo, "paper.tex"), "final paper\n");
+      commit("continue after ignored-file removal");
+    }
   ];
   for (const [stepIndex, prepare] of steps.entries()) {
     await prepare();
     if (stepIndex === 3) {
       const headBeforePull = git(["rev-parse", "HEAD"]);
       await engine.pull();
-      assert.equal(git(["rev-parse", "HEAD"]), headBeforePull, "ignored-file deletion must not trigger a fake remote merge on pull");
-      assert.notEqual(runGit(repo, ["cat-file", "-e", "HEAD:.gitignore"], { check: false }).code, 0, "pull must not restore a locally deleted ignored file");
+      assert.equal(
+        git(["rev-parse", "HEAD"]),
+        headBeforePull,
+        "ignored-file deletion must not trigger a fake remote merge on pull"
+      );
+      assert.notEqual(
+        runGit(repo, ["cat-file", "-e", "HEAD:.gitignore"], { check: false }).code,
+        0,
+        "pull must not restore a locally deleted ignored file"
+      );
     }
     const localHead = git(["rev-parse", "HEAD"]);
     const writesBefore = writes.length;
     await engine.push();
-    assert.equal(git(["rev-parse", "HEAD"]), localHead, "a no-change freshness check must not move or merge the local branch");
-    assert.equal(git(["status", "--porcelain=v1", "--untracked-files=all", "--", ".", ":(exclude).texleaf"]), "", "push must leave the worktree clean");
-    assert.equal(mergeBase(repo, config.git.remoteBranch, "main"), localHead, "the verified local HEAD must be an ancestor of the remote snapshot");
-    assert.equal(hasDiffBetween(repo, localHead, config.git.remoteBranch), false, "verified snapshot tree should match the local project tree");
+    assert.equal(
+      git(["rev-parse", "HEAD"]),
+      localHead,
+      "a no-change freshness check must not move or merge the local branch"
+    );
+    assert.equal(
+      git(["status", "--porcelain=v1", "--untracked-files=all", "--", ".", ":(exclude).texleaf"]),
+      "",
+      "push must leave the worktree clean"
+    );
+    assert.equal(
+      mergeBase(repo, config.git.remoteBranch, "main"),
+      localHead,
+      "the verified local HEAD must be an ancestor of the remote snapshot"
+    );
+    assert.equal(
+      hasDiffBetween(repo, localHead, config.git.remoteBranch),
+      false,
+      "verified snapshot tree should match the local project tree"
+    );
     const localIgnoreExists = runGit(repo, ["cat-file", "-e", "HEAD:.gitignore"], { check: false }).code === 0;
-    const remoteIgnoreExists = runGit(repo, ["cat-file", "-e", `${config.git.remoteBranch}:.gitignore`], { check: false }).code === 0;
-    const remotePrivateExists = runGit(repo, ["cat-file", "-e", `${config.git.remoteBranch}:local-private.txt`], { check: false }).code === 0;
+    const remoteIgnoreExists =
+      runGit(repo, ["cat-file", "-e", `${config.git.remoteBranch}:.gitignore`], { check: false }).code === 0;
+    const remotePrivateExists =
+      runGit(repo, ["cat-file", "-e", `${config.git.remoteBranch}:local-private.txt`], { check: false }).code === 0;
     assert.equal(remoteIgnoreExists, localIgnoreExists, "the snapshot must preserve the local ignored-file set");
     assert.equal(remotePrivateExists, localIgnoreExists, "custom ignored files must follow the verified local tree");
     if (localIgnoreExists) assert.match(git(["show", `${config.git.remoteBranch}:.gitignore`]), /\.texleaf\//);
@@ -311,10 +402,19 @@ test("checks TexPage sessions from the project total status", async () => {
   const pool = mockAgent.get("https://www.texpage.com");
   pool.intercept({ method: "GET", path: /^\/api\/project\/total\?t=\d+$/ }).reply(200, { status: { code: 1 } });
   pool.intercept({ method: "GET", path: /^\/api\/project\/total\?t=\d+$/ }).reply(200, { status: { code: 0 } });
-  const session = sessionFromCookieHeader({ host: "https://www.texpage.com", profile: "default", cookieHeader: "SESSIONID=secret", sslVerify: true });
+  const session = sessionFromCookieHeader({
+    host: "https://www.texpage.com",
+    profile: "default",
+    cookieHeader: "SESSIONID=secret",
+    sslVerify: true
+  });
   try {
     assert.deepEqual(await checkSession({ host: session.host, session }), { loggedIn: true });
-    assert.deepEqual(await checkSession({ host: session.host, session }), { loggedIn: false, error: "TexPage session was rejected." });
+    assert.deepEqual(await checkSession({ host: session.host, session }), {
+      loggedIn: false,
+      error: "TexPage session was rejected.",
+      authRequired: true
+    });
   } finally {
     setGlobalDispatcher(previousDispatcher);
     await mockAgent.close();
@@ -376,4 +476,51 @@ test("logs in to custom host with email and password", async () => {
     setGlobalDispatcher(previousDispatcher);
     await mockAgent.close();
   }
+});
+
+test("keeps defaults when config sections are partial", async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "texleaf-partial-config-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.mkdir(path.join(dir, ".texleaf"), { recursive: true });
+  await fs.writeFile(
+    path.join(dir, ".texleaf", "config.json"),
+    JSON.stringify({
+      project: {
+        host: "https://www.overleaf.com",
+        projectId: "project-id",
+        projectName: "Partial",
+        platform: "overleaf"
+      },
+      git: { mainBranch: "master" },
+      backend: { timeoutMs: 5_000 }
+    })
+  );
+  const config = await loadConfig(dir);
+  assert.equal(config.git.mainBranch, "master");
+  assert.equal(config.git.remoteBranch, "texleaf-remote", "a partial git section must not drop the remote branch");
+  assert.equal(config.backend.timeoutMs, 5_000);
+  assert.equal(config.backend.sslVerify, true, "a partial backend section must not disable TLS verification");
+  assert.equal(config.sync.lockFile, ".texleaf/lock");
+  assert.equal(config.ignore.patterns.includes(".texleaf/"), true);
+  assert.equal(config.auth.sessionFile, globalSessionFile("overleaf"));
+});
+
+test("a sync lock left behind by a crashed run is reclaimed", async (t) => {
+  const { repo, engine, commit } = await makeSyncFixture(t);
+  const lockFile = path.join(repo, ".texleaf", "lock");
+  await fs.mkdir(path.dirname(lockFile), { recursive: true });
+  await fs.writeFile(lockFile, JSON.stringify({ pid: 2147483647, createdAt: new Date().toISOString() }));
+  await fs.writeFile(path.join(repo, "added.tex"), "new file\n");
+  commit("add file");
+  await engine.push();
+  assert.equal(await exists(lockFile), false, "the reclaimed lock must be released after the run");
+});
+
+test("a sync lock owned by a live run still blocks", async (t) => {
+  const { repo, engine } = await makeSyncFixture(t);
+  const lockFile = path.join(repo, ".texleaf", "lock");
+  await fs.mkdir(path.dirname(lockFile), { recursive: true });
+  await fs.writeFile(lockFile, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
+  await assert.rejects(engine.push(), /Another texleaf operation is running/);
+  assert.equal(await exists(lockFile), true, "a live owner's lock must not be deleted");
 });

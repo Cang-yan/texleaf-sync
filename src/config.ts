@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import { ConfigError } from "./errors.js";
@@ -42,6 +43,8 @@ export interface TexleafConfig {
     patterns: string[];
   };
 }
+
+export const DEFAULT_TIMEOUT_MS = 16_000;
 
 export const defaultIgnorePatterns = [
   ".git/",
@@ -109,7 +112,7 @@ export function defaultConfig(args: {
       remoteBranch: "texleaf-remote"
     },
     backend: {
-      timeoutMs: 16_000,
+      timeoutMs: DEFAULT_TIMEOUT_MS,
       sslVerify: args.sslVerify ?? !platformDisablesTls(platform, host)
     },
     auth: {
@@ -135,25 +138,35 @@ export async function loadConfig(repo: string): Promise<TexleafConfig> {
   if (!(await exists(target))) throw new ConfigError(`Missing config file: ${target}`);
   const config = await readJson<TexleafConfig>(target);
   if (!config.project?.projectId) throw new ConfigError("Invalid .texleaf/config.json: missing project.projectId");
+  const defaults = defaultConfig({
+    repoRoot: repo,
+    host: config.project.host,
+    projectId: config.project.projectId,
+    ownerKey: config.project.ownerKey,
+    versionNo: config.project.versionNo,
+    projectName: config.project.projectName ?? config.project.projectId,
+    platform: config.project.platform ?? hostPlatform(config.project.host),
+    profile: config.auth?.profile,
+    sessionFile: config.auth?.sessionFile,
+    sslVerify: config.backend?.sslVerify
+  });
+  // Merge section by section: a partial section in the file must not drop the
+  // remaining defaults (an undefined git.remoteBranch or backend.sslVerify would
+  // silently break the remote branch or TLS verification).
   return {
-    ...defaultConfig({
-      repoRoot: repo,
-      host: config.project.host,
-      projectId: config.project.projectId,
-      ownerKey: config.project.ownerKey,
-      versionNo: config.project.versionNo,
-      projectName: config.project.projectName ?? config.project.projectId,
-      platform: config.project.platform ?? hostPlatform(config.project.host),
-      profile: config.auth?.profile,
-      sessionFile: config.auth?.sessionFile,
-      sslVerify: config.backend?.sslVerify
-    }),
+    ...defaults,
     ...config,
     project: {
+      ...defaults.project,
       ...config.project,
       host: normalizeHost(config.project.host),
       platform: config.project.platform ?? hostPlatform(config.project.host)
-    }
+    },
+    git: { ...defaults.git, ...config.git },
+    backend: { ...defaults.backend, ...config.backend },
+    auth: { ...defaults.auth, ...config.auth },
+    sync: { ...defaults.sync, ...config.sync },
+    ignore: { ...defaults.ignore, ...config.ignore }
   };
 }
 
@@ -165,11 +178,16 @@ export async function ensureProjectGitignore(repo: string): Promise<void> {
   const target = path.join(repo, ".gitignore");
   const desired = [".texleaf/", ".env"];
   let current = "";
-  if (await exists(target)) current = await import("node:fs/promises").then((fs) => fs.readFile(target, "utf8"));
-  const lines = new Set(current.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+  if (await exists(target)) current = await fs.readFile(target, "utf8");
+  const lines = new Set(
+    current
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+  );
   const missing = desired.filter((line) => !lines.has(line));
   if (!missing.length) return;
   const prefix = current && !current.endsWith("\n") ? "\n" : "";
   await ensureDir(path.dirname(target));
-  await import("node:fs/promises").then((fs) => fs.writeFile(target, `${current}${prefix}${missing.join("\n")}\n`, "utf8"));
+  await fs.writeFile(target, `${current}${prefix}${missing.join("\n")}\n`, "utf8");
 }

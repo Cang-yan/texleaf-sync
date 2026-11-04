@@ -48,7 +48,14 @@ test("From Chrome saves every valid platform and finishes without another prompt
   const target = await chooseAuthTarget({ profile: "research" }, io, services);
   assert.equal(target, undefined);
   assert.deepEqual(prompts, ["Platform [1]: "]);
-  assert.deepEqual(imports.map(({ platform, sslVerify }) => [platform, sslVerify]), [["cstcloud", false], ["overleaf", true], ["texpage", true]]);
+  assert.deepEqual(
+    imports.map(({ platform, sslVerify }) => [platform, sslVerify]),
+    [
+      ["cstcloud", false],
+      ["overleaf", true],
+      ["texpage", true]
+    ]
+  );
   for (const platform of ["cstcloud", "overleaf", "texpage"]) {
     const file = services.sessionFile(platform, "research");
     const session = await loadSession(file);
@@ -92,7 +99,10 @@ test("a failed first platform does not stop importing the next; Finish keeps the
   const { io, services, lines, prompts, imports } = await menuFixture(t, ["5", "2"], ["overleaf"]);
   const target = await chooseAuthTarget({}, io, services);
   assert.equal(target, undefined);
-  assert.deepEqual(imports.map(({ platform }) => platform), ["cstcloud", "overleaf", "texpage"]);
+  assert.deepEqual(
+    imports.map(({ platform }) => platform),
+    ["cstcloud", "overleaf", "texpage"]
+  );
   assert.equal((await loadSession(services.sessionFile("overleaf"))).cookies[0].value, "overleaf-test-secret");
   assert.match(lines.join("\n"), /Manual login needed for: cstcloud/);
   assert.deepEqual(prompts, ["Platform [1]: ", "Next [1]: "]);
@@ -134,7 +144,10 @@ test("a single --session-file cannot be overwritten by a multi-platform import",
 test("--from-chrome checks all platforms directly and noninteractive failures do not prompt", async (t) => {
   const { io, services, lines, prompts } = await menuFixture(t, [], ["cstcloud"]);
   io.interactive = false;
-  await assert.rejects(chooseAuthTarget({ fromChrome: true, chromeProfile: "Default" }, io, services), /in a terminal to enter cookies manually/);
+  await assert.rejects(
+    chooseAuthTarget({ fromChrome: true, chromeProfile: "Default" }, io, services),
+    /in a terminal to enter cookies manually/
+  );
   assert.equal((await loadSession(services.sessionFile("cstcloud"))).cookies[0].value, "cstcloud-test-secret");
   assert.deepEqual(prompts, []);
   assert.doesNotMatch(lines.join("\n"), /Choose project platform/);

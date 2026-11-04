@@ -8,6 +8,10 @@ import { collectTree, isIgnored } from "./snapshot.js";
 
 const gitIdentity = ["-c", "user.name=texleaf", "-c", "user.email=texleaf@example.invalid"];
 
+// spawnSync captures at most 1 MiB by default and silently truncates beyond it,
+// which would corrupt ls-files/ls-tree listings on larger projects.
+const gitMaxBuffer = 64 * 1024 * 1024;
+
 export interface GitResult {
   stdout: string;
   stderr: string;
@@ -23,15 +27,21 @@ export function runGit(
   const result = spawnSync(command[0], command.slice(1), {
     cwd: repo,
     env: { ...process.env, ...options.env },
-    encoding: "utf8"
+    encoding: "utf8",
+    maxBuffer: gitMaxBuffer
   });
-  const code = result.status ?? 1;
   const gitResult = {
     stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    code
+    stderr: result.stderr || (result.error ? String(result.error.message) : ""),
+    code: result.status ?? 1
   };
-  if (options.check !== false && code !== 0) {
+  // A spawn-level failure (missing git, ENOBUFS on huge output, ...) is an
+  // infrastructure problem rather than a command answering "no". Fail loudly
+  // even when check is false so callers never act on truncated output.
+  if (result.error) {
+    throw new GitError(`Git command failed: ${command.join(" ")}\n${gitResult.stderr}`);
+  }
+  if (options.check !== false && gitResult.code !== 0) {
     throw new GitError(`Git command failed: ${command.join(" ")}\n${gitResult.stderr || gitResult.stdout}`);
   }
   return gitResult;
@@ -77,7 +87,15 @@ export function requireCleanWorktree(repo: string): void {
 }
 
 export function worktreeChanges(repo: string): string[] {
-  const result = runGit(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).texleaf"]);
+  const result = runGit(repo, [
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+    "--",
+    ".",
+    ":(exclude).texleaf"
+  ]);
   return result.stdout.split("\0").filter(Boolean);
 }
 
@@ -151,8 +169,9 @@ export async function importSnapshotToBranch(args: {
         const [mode, type, objectId] = entry.slice(0, tab).split(" ");
         const projectPath = entry.slice(tab + 1);
         if (type !== "blob" || !mode || !objectId || preserved.has(projectPath)) continue;
-        const ignoredByGit = ignoredTracked.has(projectPath)
-          || runGit(args.repo, ["check-ignore", "--no-index", "--quiet", "--", projectPath], { check: false }).code === 0;
+        const ignoredByGit =
+          ignoredTracked.has(projectPath) ||
+          runGit(args.repo, ["check-ignore", "--no-index", "--quiet", "--", projectPath], { check: false }).code === 0;
         if (isIgnored(projectPath, args.patterns) || ignoredByGit) preserved.set(projectPath, { mode, objectId });
       }
     }
@@ -177,7 +196,7 @@ export function nameStatusDiff(repo: string, base: string, head = "HEAD"): strin
   const out = runGit(repo, ["diff", "--name-status", "--find-renames", "-z", base, head]).stdout;
   const fields = out.split("\0");
   const rows: string[][] = [];
-  for (let index = 0; index < fields.length && fields[index]; ) {
+  for (let index = 0; index < fields.length && fields[index];) {
     const status = fields[index++];
     if (status.startsWith("R")) rows.push([status, fields[index++], fields[index++]]);
     else rows.push([status, fields[index++]]);
